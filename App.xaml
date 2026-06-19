@@ -1,0 +1,51 @@
+<Application x:Class="ColumnView.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:ColumnView"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <!-- Windows 11 エクスプローラー風のリスト行 (角丸ハイライト・ホバー) -->
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="Margin" Value="4,1"/>
+            <Setter Property="Foreground" Value="#FF1B1B1B"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                CornerRadius="4"
+                                Padding="{TemplateBinding Padding}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#14000000"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#1F0078D4"/>
+                            </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True"/>
+                                    <Condition Property="IsMouseOver" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="Bd" Property="Background" Value="#2E0078D4"/>
+                            </MultiTrigger>
+                            <!-- ドラッグ中のドロップ先フォルダー -->
+                            <Trigger Property="local:DragDropHelper.DropHighlight" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#330078D4"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#990078D4"/>
+                                <Setter TargetName="Bd" Property="BorderThickness" Value="1"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Application.Resources>
+</Application>
