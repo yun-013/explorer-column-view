@@ -4,7 +4,7 @@
         xmlns:local="clr-namespace:ColumnView"
         Title="Column View"
         Height="680" Width="1180"
-        FontFamily="Segoe UI" FontSize="13"
+        FontFamily="{DynamicResource {x:Static SystemFonts.MessageFontFamilyKey}}" FontSize="13"
         WindowStyle="None"
         Background="Transparent"
         StateChanged="Window_StateChanged"
@@ -171,6 +171,7 @@
                              ItemContainerStyle="{StaticResource TabItemStyle}"
                              Background="Transparent" BorderThickness="0"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             ScrollViewer.VerticalScrollBarVisibility="Disabled"
                              PreviewMouseLeftButtonDown="TabStrip_PreviewMouseLeftButtonDown"
                              PreviewMouseLeftButtonUp="TabStrip_PreviewMouseLeftButtonUp">
                         <ListBox.ItemsPanel>
