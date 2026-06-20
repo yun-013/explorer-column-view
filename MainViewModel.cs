@@ -284,6 +284,15 @@ public class MainViewModel : ObservableObject
         await RefreshHomeColumnsAsync();
     }
 
+    /// <summary>お気に入りをドラッグで並べ替える (source を target の前後へ移動)。</summary>
+    public async Task MoveFavoriteAsync(string source, string target, bool insertAfter)
+    {
+        if (!_settings.MoveFavorite(source, target, insertAfter))
+            return;
+        StatusText = "お気に入りを並べ替えました";
+        await RefreshHomeColumnsAsync();
+    }
+
     private async Task RefreshHomeColumnsAsync()
     {
         _navigating = true;
@@ -550,16 +559,5 @@ public class MainViewModel : ObservableObject
     private static string TrimTitle(string title)
         => title.Length > 24 ? title[..22] + "…" : title;
 
-    private static string FormatSize(long bytes)
-    {
-        string[] units = { "B", "KB", "MB", "GB", "TB" };
-        double size = bytes;
-        var unit = 0;
-        while (size >= 1024 && unit < units.Length - 1)
-        {
-            size /= 1024;
-            unit++;
-        }
-        return unit == 0 ? $"{bytes} B" : $"{size:0.#} {units[unit]}";
-    }
+    private static string FormatSize(long bytes) => FileSystemItem.FormatSize(bytes);
 }

@@ -42,6 +42,15 @@
                                 <Setter TargetName="Bd" Property="BorderBrush" Value="#990078D4"/>
                                 <Setter TargetName="Bd" Property="BorderThickness" Value="1"/>
                             </Trigger>
+                            <!-- お気に入り並べ替え: 挿入位置を線で示す -->
+                            <Trigger Property="local:DragDropHelper.DropInsert" Value="Before">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D4"/>
+                                <Setter TargetName="Bd" Property="BorderThickness" Value="0,2,0,0"/>
+                            </Trigger>
+                            <Trigger Property="local:DragDropHelper.DropInsert" Value="After">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D4"/>
+                                <Setter TargetName="Bd" Property="BorderThickness" Value="0,0,0,2"/>
+                            </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>

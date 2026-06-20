@@ -105,11 +105,36 @@ public static class IconCache
     private const uint SHGFI_ICON = 0x100;
     private const uint SHGFI_SMALLICON = 0x1;
     private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
+    private const uint SHGFI_TYPENAME = 0x400;
     private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
     private const uint FILE_ATTRIBUTE_NORMAL = 0x80;
 
     private static readonly Dictionary<string, ImageSource?> _cache = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, string> _typeNames = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object _lock = new();
+
+    /// <summary>拡張子ベースの「種類」表示名 (例: テキスト ドキュメント)。ディスクに触れず拡張子単位でキャッシュ。</summary>
+    public static string GetTypeName(string? extension)
+    {
+        var key = string.IsNullOrEmpty(extension) ? "<none>" : extension;
+        lock (_lock)
+        {
+            if (_typeNames.TryGetValue(key, out var cached))
+                return cached;
+
+            var shfi = new SHFILEINFO();
+            SHGetFileInfo(
+                "file" + (string.IsNullOrEmpty(extension) ? "" : extension),
+                FILE_ATTRIBUTE_NORMAL, ref shfi, (uint)Marshal.SizeOf<SHFILEINFO>(),
+                SHGFI_USEFILEATTRIBUTES | SHGFI_TYPENAME);
+
+            var name = string.IsNullOrEmpty(shfi.szTypeName)
+                ? (string.IsNullOrEmpty(extension) ? "ファイル" : extension.TrimStart('.').ToUpperInvariant() + " ファイル")
+                : shfi.szTypeName;
+            _typeNames[key] = name;
+            return name;
+        }
+    }
 
     /// <summary>拡張子ベースの汎用アイコン。ディスクに触れない。</summary>
     public static ImageSource? GetByExtension(string? extension, bool isDirectory)

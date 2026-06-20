@@ -351,7 +351,49 @@
                                              Drop="Column_Drop">
                                         <ListBox.ItemTemplate>
                                             <DataTemplate DataType="{x:Type local:FileSystemItem}">
-                                                <Grid ToolTip="{Binding BadgeTooltip}">
+                                                <Grid ToolTipService.ShowDuration="30000"
+                                                      ToolTipOpening="Item_ToolTipOpening"
+                                                      ToolTipClosing="Item_ToolTipClosing">
+                                                    <Grid.ToolTip>
+                                                        <ToolTip MaxWidth="420">
+                                                            <Grid Margin="3,2">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <Grid.RowDefinitions>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                    <RowDefinition Height="Auto"/>
+                                                                </Grid.RowDefinitions>
+                                                                <Grid.Resources>
+                                                                    <Style TargetType="TextBlock" x:Key="Label">
+                                                                        <Setter Property="Foreground" Value="#FF707070"/>
+                                                                        <Setter Property="Margin" Value="0,1,12,1"/>
+                                                                    </Style>
+                                                                    <Style TargetType="TextBlock" x:Key="Value">
+                                                                        <Setter Property="Margin" Value="0,1"/>
+                                                                        <Setter Property="TextWrapping" Value="Wrap"/>
+                                                                    </Style>
+                                                                </Grid.Resources>
+
+                                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="名前" Style="{StaticResource Label}"/>
+                                                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Name}" Style="{StaticResource Value}"/>
+
+                                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="種類" Style="{StaticResource Label}"
+                                                                           Visibility="{Binding TypeRowVisibility}"/>
+                                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource Value}"
+                                                                           Visibility="{Binding TypeRowVisibility}"/>
+
+                                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"/>
+                                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"/>
+
+                                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
+                                                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
+                                                            </Grid>
+                                                        </ToolTip>
+                                                    </Grid.ToolTip>
                                                     <Grid.ColumnDefinitions>
                                                         <ColumnDefinition Width="22"/>
                                                         <ColumnDefinition Width="*"/>

@@ -506,21 +506,44 @@ public partial class MainWindow : Window
     private void Column_Loaded(object sender, RoutedEventArgs e)
         => (sender as FrameworkElement)?.BringIntoView();
 
+    // ---- ホバー時のツールチップ (フォルダーはサイズを遅延計算) ----
+
+    private CancellationTokenSource? _tooltipCts;
+
+    private async void Item_ToolTipOpening(object sender, ToolTipEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not FileSystemItem { IsDirectory: true } item)
+            return;
+        _tooltipCts?.Cancel();
+        _tooltipCts = new CancellationTokenSource();
+        await item.EnsureFolderSizeAsync(_tooltipCts.Token);
+    }
+
+    private void Item_ToolTipClosing(object sender, ToolTipEventArgs e)
+        => _tooltipCts?.Cancel();
+
     // ---- ドラッグ&ドロップ ----
 
     private Point _dragStart;
     private FileSystemItem? _dragCandidate;
+    private FileSystemItem? _favDragCandidate;
     private FileSystemItem? _reclickItem;
     private bool _isDragging;
     private ListBoxItem? _dropHighlight;
+    private ListBoxItem? _insertIndicator;
+
+    /// <summary>ホーム列のお気に入りを並べ替えるときのドラッグデータ形式。</summary>
+    private const string FavoriteFormat = "ColumnView.FavoriteReorder";
 
     private void Column_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _dragStart = e.GetPosition(null);
         _reclickItem = null;
         var item = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as FileSystemItem;
-        // ドライブ・特殊フォルダー・お気に入りはナビゲーション用なのでドラッグ対象外
+        // ドライブ・特殊フォルダー・お気に入りはナビゲーション用なのでファイル D&D の対象外
         _dragCandidate = item is { UseRealIcon: false } ? item : null;
+        // お気に入りはホーム列内での並べ替え専用ドラッグ対象
+        _favDragCandidate = item is { IsFavoriteEntry: true } ? item : null;
 
         // 既に複数選択された項目を掴んだ場合、選択を 1 つに潰さずにまとめてドラッグできるようにする
         if (sender is ListBox lb && item is not null && lb.SelectedItems.Count > 1
@@ -541,16 +564,41 @@ public partial class MainWindow : Window
             lb.SelectedItem = _reclickItem;
         }
         _reclickItem = null;
+        _favDragCandidate = null;
     }
 
     private void Column_PreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (_isDragging || _dragCandidate is null || e.LeftButton != MouseButtonState.Pressed)
+        if (_isDragging || e.LeftButton != MouseButtonState.Pressed)
+            return;
+        if (_dragCandidate is null && _favDragCandidate is null)
             return;
 
         var pos = e.GetPosition(null);
         if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
             Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+            return;
+
+        // お気に入りはホーム列内での並べ替え (パスを運んで挿入位置で入れ替え)
+        if (_favDragCandidate is not null)
+        {
+            var favData = new DataObject(FavoriteFormat, _favDragCandidate.Path);
+            _isDragging = true;
+            try
+            {
+                DragDrop.DoDragDrop((DependencyObject)sender, favData, DragDropEffects.Move);
+            }
+            finally
+            {
+                _isDragging = false;
+                _favDragCandidate = null;
+                _dragCandidate = null;
+                ClearInsertIndicator();
+            }
+            return;
+        }
+
+        if (_dragCandidate is null)
             return;
 
         // 掴んだ項目が複数選択に含まれていれば、選択中の全ファイルをまとめて運ぶ
@@ -580,17 +628,46 @@ public partial class MainWindow : Window
 
     private void Column_DragOver(object sender, DragEventArgs e)
     {
+        if (e.Data.GetDataPresent(FavoriteFormat))
+        {
+            var source = e.Data.GetData(FavoriteFormat) as string ?? "";
+            var container = ResolveFavoriteDrop(sender, e, source, out var after);
+            e.Effects = container is not null ? DragDropEffects.Move : DragDropEffects.None;
+            SetInsertIndicator(container, after);
+            e.Handled = true;
+            return;
+        }
+
         e.Effects = ResolveDropEffect(sender, e);
         UpdateDropHighlight(e);
         e.Handled = true;
     }
 
     private void Column_DragLeave(object sender, DragEventArgs e)
-        => ClearDropHighlight();
+    {
+        ClearDropHighlight();
+        ClearInsertIndicator();
+    }
 
     private async void Column_Drop(object sender, DragEventArgs e)
     {
         ClearDropHighlight();
+        ClearInsertIndicator();
+
+        if (e.Data.GetDataPresent(FavoriteFormat))
+        {
+            var source = e.Data.GetData(FavoriteFormat) as string;
+            if (source is null)
+                return;
+            var container = ResolveFavoriteDrop(sender, e, source, out var after);
+            if (container?.DataContext is FileSystemItem target)
+            {
+                e.Handled = true;
+                await _vm.MoveFavoriteAsync(source, target.Path, after);
+            }
+            return;
+        }
+
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
             return;
 
@@ -655,6 +732,45 @@ public partial class MainWindow : Window
         if (_dropHighlight is not null)
             DragDropHelper.SetDropHighlight(_dropHighlight, false);
         _dropHighlight = null;
+    }
+
+    /// <summary>お気に入りの並べ替えで、カーソル下のお気に入り項目とその前後どちらに差し込むかを求める。</summary>
+    private static ListBoxItem? ResolveFavoriteDrop(object sender, DragEventArgs e, string source, out bool after)
+    {
+        after = false;
+        // 並べ替えはホーム列 (Path == null) 内でのみ許可する
+        if (sender is not ListBox { DataContext: ColumnModel { Path: null } })
+            return null;
+
+        var container = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+        if (container?.DataContext is not FileSystemItem { IsFavoriteEntry: true } item)
+            return null;
+        // 自分自身の上にいるときは無効 (移動しても変化しないため)
+        if (string.Equals(item.Path, source, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        after = e.GetPosition(container).Y > container.ActualHeight / 2;
+        return container;
+    }
+
+    private void SetInsertIndicator(ListBoxItem? container, bool after)
+    {
+        var side = container is null ? InsertSide.None : (after ? InsertSide.After : InsertSide.Before);
+        if (ReferenceEquals(container, _insertIndicator) &&
+            (_insertIndicator is null || DragDropHelper.GetDropInsert(_insertIndicator) == side))
+            return;
+        if (_insertIndicator is not null)
+            DragDropHelper.SetDropInsert(_insertIndicator, InsertSide.None);
+        _insertIndicator = container;
+        if (_insertIndicator is not null)
+            DragDropHelper.SetDropInsert(_insertIndicator, side);
+    }
+
+    private void ClearInsertIndicator()
+    {
+        if (_insertIndicator is not null)
+            DragDropHelper.SetDropInsert(_insertIndicator, InsertSide.None);
+        _insertIndicator = null;
     }
 
     private static T? FindAncestor<T>(DependencyObject? d) where T : DependencyObject

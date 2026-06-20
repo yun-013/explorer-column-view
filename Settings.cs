@@ -66,4 +66,29 @@ public class AppSettings
         Save();
         return true;
     }
+
+    /// <summary>お気に入り <paramref name="source"/> を <paramref name="target"/> の直前 / 直後へ移動する。</summary>
+    public bool MoveFavorite(string source, string target, bool insertAfter)
+    {
+        var srcIndex = Favorites.FindIndex(f => string.Equals(f, source, StringComparison.OrdinalIgnoreCase));
+        if (srcIndex < 0)
+            return false;
+
+        var item = Favorites[srcIndex];
+        Favorites.RemoveAt(srcIndex);
+
+        var dstIndex = Favorites.FindIndex(f => string.Equals(f, target, StringComparison.OrdinalIgnoreCase));
+        if (dstIndex < 0)
+        {
+            // 並べ替え対象が見つからない (= source 自身など): 元に戻して何もしない
+            Favorites.Insert(srcIndex, item);
+            return false;
+        }
+        if (insertAfter)
+            dstIndex++;
+
+        Favorites.Insert(dstIndex, item);
+        Save();
+        return true;
+    }
 }

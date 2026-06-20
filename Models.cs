@@ -92,6 +92,93 @@ public class FileSystemItem : ObservableObject
 
     public Visibility ChevronVisibility => IsDirectory ? Visibility.Visible : Visibility.Collapsed;
 
+    // ---- ホバー時のツールチップ情報 ----
+
+    /// <summary>「種類」(ファイルのみ表示)。フォルダーは行ごと非表示。</summary>
+    public string TypeName => IsDirectory
+        ? "ファイル フォルダー"
+        : IconCache.GetTypeName(System.IO.Path.GetExtension(Name));
+
+    /// <summary>種類の行はファイルのときだけ見せる。</summary>
+    public Visibility TypeRowVisibility => IsDirectory ? Visibility.Collapsed : Visibility.Visible;
+
+    public string ModifiedText => Modified.ToString("yyyy/MM/dd HH:mm");
+
+    private string _folderSizeText = "計算中…";
+    private bool _folderSizeComputed;
+
+    /// <summary>サイズ表示。ファイルは即時、フォルダーはホバー時に再帰計算した値。</summary>
+    public string SizeText => IsDirectory ? _folderSizeText : FormatSize(Size);
+
+    /// <summary>フォルダーの合計サイズをバックグラウンドで集計する (ホバー時に一度だけ)。</summary>
+    public async Task EnsureFolderSizeAsync(CancellationToken ct)
+    {
+        if (!IsDirectory || _folderSizeComputed)
+            return;
+        _folderSizeComputed = true;
+        try
+        {
+            var bytes = await Task.Run(() => DirectorySize(Path, ct), ct);
+            _folderSizeText = FormatSize(bytes);
+        }
+        catch (OperationCanceledException)
+        {
+            _folderSizeComputed = false; // 次回ホバーで再計算
+            return;
+        }
+        catch
+        {
+            _folderSizeText = "—";
+        }
+        Raise(nameof(SizeText));
+    }
+
+    /// <summary>配下のファイルサイズを合計する。メタデータの長さのみ参照しクラウド実体は取得しない。</summary>
+    private static long DirectorySize(string path, CancellationToken ct)
+    {
+        long total = 0;
+        var stack = new Stack<string>();
+        stack.Push(path);
+        while (stack.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            DirectoryInfo dir;
+            try
+            {
+                dir = new DirectoryInfo(stack.Pop());
+                foreach (var file in dir.EnumerateFiles())
+                {
+                    ct.ThrowIfCancellationRequested();
+                    total += file.Length;
+                }
+                foreach (var sub in dir.EnumerateDirectories())
+                {
+                    // ジャンクション/シンボリックリンクは無限ループ回避のため辿らない
+                    if ((sub.Attributes & FileAttributes.ReparsePoint) == 0)
+                        stack.Push(sub.FullName);
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                // アクセスできない配下は無視して合計を続行
+            }
+        }
+        return total;
+    }
+
+    public static string FormatSize(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double size = bytes;
+        var unit = 0;
+        while (size >= 1024 && unit < units.Length - 1)
+        {
+            size /= 1024;
+            unit++;
+        }
+        return unit == 0 ? $"{bytes} B" : $"{size:0.#} {units[unit]}";
+    }
+
     private const int FILE_ATTRIBUTE_OFFLINE = 0x1000;
     private const int FILE_ATTRIBUTE_PINNED = 0x80000;
     private const int FILE_ATTRIBUTE_UNPINNED = 0x100000;
