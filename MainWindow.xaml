@@ -128,6 +128,100 @@
             </Setter>
         </Style>
 
+        <!-- 通常のファイル / フォルダー行 (ホーム列のお気に入り・グループメンバーも含む) -->
+        <DataTemplate x:Key="FileItemTemplate" DataType="{x:Type local:FileSystemItem}">
+            <Grid ToolTipService.ShowDuration="30000"
+                  ToolTipOpening="Item_ToolTipOpening"
+                  ToolTipClosing="Item_ToolTipClosing">
+                <Grid.ToolTip>
+                    <ToolTip MaxWidth="420">
+                        <Grid Margin="3,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <Grid.Resources>
+                                <Style TargetType="TextBlock" x:Key="Label">
+                                    <Setter Property="Foreground" Value="#FF707070"/>
+                                    <Setter Property="Margin" Value="0,1,12,1"/>
+                                </Style>
+                                <Style TargetType="TextBlock" x:Key="Value">
+                                    <Setter Property="Margin" Value="0,1"/>
+                                    <Setter Property="TextWrapping" Value="Wrap"/>
+                                </Style>
+                            </Grid.Resources>
+
+                            <TextBlock Grid.Row="0" Grid.Column="0" Text="名前" Style="{StaticResource Label}"/>
+                            <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Name}" Style="{StaticResource Value}"/>
+
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="種類" Style="{StaticResource Label}"
+                                       Visibility="{Binding TypeRowVisibility}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource Value}"
+                                       Visibility="{Binding TypeRowVisibility}"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"/>
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"/>
+
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
+                        </Grid>
+                    </ToolTip>
+                </Grid.ToolTip>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="22"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="14"/>
+                </Grid.ColumnDefinitions>
+                <Image Grid.Column="0" Width="16" Height="16"
+                       Source="{Binding Icon}" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding Name}"
+                           Margin="4,0,0,0" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="2" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                           Text="{Binding Badge}" Foreground="{Binding BadgeBrush}"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                <TextBlock Grid.Column="3" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                           Text="&#xE76C;" Foreground="#FFB0B0B6"
+                           Visibility="{Binding ChevronVisibility}"
+                           VerticalAlignment="Center" HorizontalAlignment="Right"/>
+            </Grid>
+        </DataTemplate>
+
+        <!-- タブグループの見出し行 (クリックで中身を次の列に展開) -->
+        <DataTemplate x:Key="GroupItemTemplate" DataType="{x:Type local:FileSystemItem}">
+            <Grid Background="Transparent"
+                  ToolTip="クリックで中身を開く / 右クリックで「すべてタブで開く」など管理">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="22"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="14"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" FontFamily="Segoe MDL2 Assets" FontSize="14"
+                           Text="&#xE71D;" Foreground="#FF6B5BD2"
+                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold"
+                           Margin="4,0,0,0" VerticalAlignment="Center"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock Grid.Column="2" Text="{Binding MemberCount}" Foreground="#FF9090A0"
+                           Margin="2,0,4,0" VerticalAlignment="Center"/>
+                <TextBlock Grid.Column="3" FontFamily="Segoe MDL2 Assets" FontSize="9"
+                           Text="&#xE76C;" Foreground="#FFB0B0B6"
+                           VerticalAlignment="Center" HorizontalAlignment="Right"/>
+            </Grid>
+        </DataTemplate>
+
+        <local:ColumnItemTemplateSelector x:Key="ColumnItemSelector"
+                                          NormalTemplate="{StaticResource FileItemTemplate}"
+                                          GroupTemplate="{StaticResource GroupItemTemplate}"/>
+
         <!-- パンくずの各セグメント -->
         <Style x:Key="CrumbButton" TargetType="Button">
             <Setter Property="Background" Value="Transparent"/>
@@ -211,6 +305,10 @@
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE735;"
                                   ToolTip="現在のフォルダーをお気に入りに追加 / 削除"
                                   IsChecked="{Binding IsCurrentFavorite, Mode=OneWay}" Click="Favorite_Click"/>
+                    <Button x:Name="GroupsButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                            Content="&#xE71D;" Foreground="#FF6B5BD2"
+                            ToolTip="タブグループ (よく使うフォルダーの組合せをワンクリックで開く)"
+                            Click="GroupsButton_Click"/>
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xED1A;"
                                   ToolTip="隠しファイルを表示 (Ctrl+H)" IsChecked="{Binding ShowHidden}"/>
                     <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
@@ -337,7 +435,7 @@
                                              HorizontalContentAlignment="Stretch"
                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                              VirtualizingPanel.IsVirtualizing="True"
-                                             VirtualizingPanel.VirtualizationMode="Recycling"
+                                             VirtualizingPanel.VirtualizationMode="Standard"
                                              AllowDrop="True"
                                              SelectionChanged="Column_SelectionChanged"
                                              PreviewKeyDown="Column_PreviewKeyDown"
@@ -348,73 +446,8 @@
                                              PreviewMouseRightButtonUp="Column_PreviewMouseRightButtonUp"
                                              DragOver="Column_DragOver"
                                              DragLeave="Column_DragLeave"
-                                             Drop="Column_Drop">
-                                        <ListBox.ItemTemplate>
-                                            <DataTemplate DataType="{x:Type local:FileSystemItem}">
-                                                <Grid ToolTipService.ShowDuration="30000"
-                                                      ToolTipOpening="Item_ToolTipOpening"
-                                                      ToolTipClosing="Item_ToolTipClosing">
-                                                    <Grid.ToolTip>
-                                                        <ToolTip MaxWidth="420">
-                                                            <Grid Margin="3,2">
-                                                                <Grid.ColumnDefinitions>
-                                                                    <ColumnDefinition Width="Auto"/>
-                                                                    <ColumnDefinition Width="*"/>
-                                                                </Grid.ColumnDefinitions>
-                                                                <Grid.RowDefinitions>
-                                                                    <RowDefinition Height="Auto"/>
-                                                                    <RowDefinition Height="Auto"/>
-                                                                    <RowDefinition Height="Auto"/>
-                                                                    <RowDefinition Height="Auto"/>
-                                                                </Grid.RowDefinitions>
-                                                                <Grid.Resources>
-                                                                    <Style TargetType="TextBlock" x:Key="Label">
-                                                                        <Setter Property="Foreground" Value="#FF707070"/>
-                                                                        <Setter Property="Margin" Value="0,1,12,1"/>
-                                                                    </Style>
-                                                                    <Style TargetType="TextBlock" x:Key="Value">
-                                                                        <Setter Property="Margin" Value="0,1"/>
-                                                                        <Setter Property="TextWrapping" Value="Wrap"/>
-                                                                    </Style>
-                                                                </Grid.Resources>
-
-                                                                <TextBlock Grid.Row="0" Grid.Column="0" Text="名前" Style="{StaticResource Label}"/>
-                                                                <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Name}" Style="{StaticResource Value}"/>
-
-                                                                <TextBlock Grid.Row="1" Grid.Column="0" Text="種類" Style="{StaticResource Label}"
-                                                                           Visibility="{Binding TypeRowVisibility}"/>
-                                                                <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource Value}"
-                                                                           Visibility="{Binding TypeRowVisibility}"/>
-
-                                                                <TextBlock Grid.Row="2" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"/>
-                                                                <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"/>
-
-                                                                <TextBlock Grid.Row="3" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
-                                                                <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
-                                                            </Grid>
-                                                        </ToolTip>
-                                                    </Grid.ToolTip>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="22"/>
-                                                        <ColumnDefinition Width="*"/>
-                                                        <ColumnDefinition Width="20"/>
-                                                        <ColumnDefinition Width="14"/>
-                                                    </Grid.ColumnDefinitions>
-                                                    <Image Grid.Column="0" Width="16" Height="16"
-                                                           Source="{Binding Icon}" VerticalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="1" Text="{Binding Name}"
-                                                               Margin="4,0,0,0" VerticalAlignment="Center"
-                                                               TextTrimming="CharacterEllipsis"/>
-                                                    <TextBlock Grid.Column="2" FontFamily="Segoe MDL2 Assets" FontSize="11"
-                                                               Text="{Binding Badge}" Foreground="{Binding BadgeBrush}"
-                                                               VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                                                    <TextBlock Grid.Column="3" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                                                               Text="&#xE76C;" Foreground="#FFB0B0B6"
-                                                               Visibility="{Binding ChevronVisibility}"
-                                                               VerticalAlignment="Center" HorizontalAlignment="Right"/>
-                                                </Grid>
-                                            </DataTemplate>
-                                        </ListBox.ItemTemplate>
+                                             Drop="Column_Drop"
+                                             ItemTemplateSelector="{StaticResource ColumnItemSelector}">
                                     </ListBox>
                                     <TextBlock Text="{Binding Error}" Margin="10" TextWrapping="Wrap"
                                                Foreground="#FFC04040" VerticalAlignment="Top">

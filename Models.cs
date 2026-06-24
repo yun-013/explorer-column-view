@@ -1,11 +1,28 @@
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 
 namespace ColumnView;
+
+/// <summary>全要素の入れ替えを変更通知 1 回 (Reset) で行える ObservableCollection。
+/// 大量項目を 1 件ずつ Add すると通知数ぶんレイアウト評価が走り重いため。</summary>
+public class RangeObservableCollection<T> : ObservableCollection<T>
+{
+    public void ReplaceAll(IEnumerable<T> items)
+    {
+        Items.Clear();
+        foreach (var item in items)
+            Items.Add(item);
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+    }
+}
 
 public enum CloudStatus
 {
@@ -34,6 +51,16 @@ public static class Glyphs
 
 public record Crumb(string Display, string Path, bool IsFirst);
 
+/// <summary>列の行テンプレートを切り替える: グループ見出しは専用、それ以外は通常のファイル行。</summary>
+public class ColumnItemTemplateSelector : DataTemplateSelector
+{
+    public DataTemplate? NormalTemplate { get; set; }
+    public DataTemplate? GroupTemplate { get; set; }
+
+    public override DataTemplate? SelectTemplate(object item, DependencyObject container)
+        => item is FileSystemItem { IsGroupEntry: true } ? GroupTemplate : NormalTemplate;
+}
+
 public class FileSystemItem : ObservableObject
 {
     public required string Path { get; init; }
@@ -49,6 +76,20 @@ public class FileSystemItem : ObservableObject
     /// <summary>ホーム列のお気に入り項目 (★バッジ表示)</summary>
     public bool IsFavoriteEntry { get; init; }
 
+    // ---- タブグループ ----
+
+    /// <summary>グループ見出し行。クリックで中身を次の列に展開する。</summary>
+    public bool IsGroupEntry { get; init; }
+
+    /// <summary>グループ内のフォルダー (メンバー) 行。グループ列に並ぶ。</summary>
+    public bool IsGroupMember { get; init; }
+
+    /// <summary>グループ見出しなら自身の Id、メンバーなら所属グループの Id。</summary>
+    public string? GroupId { get; init; }
+
+    /// <summary>グループ見出しの直下の項目数 (サブグループ＋フォルダー)。</summary>
+    public int MemberCount { get; init; }
+
     private ImageSource? _resolvedIcon;
     public ImageSource? Icon => _resolvedIcon ?? GenericIcon;
 
@@ -63,8 +104,19 @@ public class FileSystemItem : ObservableObject
         Raise(nameof(Icon));
     }
 
+    /// <summary>
+    /// 実ファイル固有のアイコンを持つ拡張子だけを実アイコン読み込みの対象にする。
+    /// .jpg や文書ファイル等は実アイコン＝拡張子アイコンなので、ファイルへ触れる
+    /// SHGetFileInfo を 1 件ずつ呼ぶのは無駄打ち＆もたつきの原因 → 拡張子アイコンで済ます。
+    /// </summary>
+    private static readonly HashSet<string> PerFileIconExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".lnk", ".ico", ".url", ".scr", ".cpl", ".msc", ".appref-ms",
+    };
+
     /// <summary>実アイコンを読み込むべきか (クラウド専用ファイルはダウンロード回避のため除外)。</summary>
-    public bool WantsRealIcon => !UseRealIcon && !IsDirectory && Cloud != CloudStatus.CloudOnly;
+    public bool WantsRealIcon => !UseRealIcon && !IsDirectory && Cloud != CloudStatus.CloudOnly
+        && PerFileIconExtensions.Contains(System.IO.Path.GetExtension(Name));
 
     public string Badge => IsFavoriteEntry ? Glyphs.Star : Cloud switch
     {
@@ -236,10 +288,13 @@ public abstract class ObservableObject : INotifyPropertyChanged
 
 public class ColumnModel : ObservableObject
 {
-    /// <summary>null のときはホーム列 (お気に入り + 特殊フォルダ + ドライブ)</summary>
+    /// <summary>フォルダー列のパス。ホーム列・グループ列では null。</summary>
     public string? Path { get; }
 
-    public ObservableCollection<FileSystemItem> Items { get; } = new();
+    /// <summary>非 null のとき、この列はグループの中身 (サブグループ＋フォルダー) を表す。</summary>
+    public string? GroupId { get; }
+
+    public RangeObservableCollection<FileSystemItem> Items { get; } = new();
 
     private FileSystemItem? _selectedItem;
     public FileSystemItem? SelectedItem
@@ -255,13 +310,22 @@ public class ColumnModel : ObservableObject
         set => Set(ref _error, value);
     }
 
+    /// <summary>フォルダー列 (path) / ホーム列 (null)。</summary>
     public ColumnModel(string? path) => Path = path;
+
+    /// <summary>グループの中身を表す列。</summary>
+    public ColumnModel(FavoriteGroup group) => GroupId = group.Id;
 
     public async Task LoadAsync(bool showHidden, Comparison<FileSystemItem> comparison)
     {
         Error = null;
         List<FileSystemItem> items;
-        if (Path is null)
+        if (GroupId is not null)
+        {
+            var id = GroupId;
+            items = await Task.Run(() => BuildGroupItems(id));
+        }
+        else if (Path is null)
         {
             items = await Task.Run(BuildHomeItems);
         }
@@ -278,9 +342,7 @@ public class ColumnModel : ObservableObject
             }
         }
 
-        Items.Clear();
-        foreach (var item in items)
-            Items.Add(item);
+        Items.ReplaceAll(items);
 
         _iconCts?.Cancel();
         _iconCts = new CancellationTokenSource();
@@ -324,9 +386,7 @@ public class ColumnModel : ObservableObject
         dirs.Sort(comparison);
         files.Sort(comparison);
 
-        Items.Clear();
-        foreach (var item in dirs.Concat(files))
-            Items.Add(item);
+        Items.ReplaceAll(dirs.Concat(files));
         SelectedItem = selected;
     }
 
@@ -361,24 +421,82 @@ public class ColumnModel : ObservableObject
         return dirs;
     }
 
+    /// <summary>グループの中身 (サブグループ＋フォルダー) を統一並び順で 1 列ぶんの項目として組み立てる。</summary>
+    private static List<FileSystemItem> BuildGroupItems(string groupId)
+    {
+        var items = new List<FileSystemItem>();
+        var group = AppSettings.Current.FindGroup(groupId);
+        if (group is null)
+            return items;
+
+        foreach (var key in AppSettings.Current.OrderedChildKeys(group))
+        {
+            if (key.StartsWith("group:", StringComparison.Ordinal))
+            {
+                var sub = AppSettings.Current.FindGroup(key["group:".Length..]);
+                if (sub is null)
+                    continue;
+                items.Add(new FileSystemItem
+                {
+                    Path = "group:" + sub.Id,
+                    Name = sub.Name,
+                    IsGroupEntry = true,
+                    GroupId = sub.Id,
+                    MemberCount = sub.Subgroups.Count + sub.Paths.Count,
+                });
+            }
+            else
+            {
+                var name = System.IO.Path.GetFileName(key.TrimEnd('\\'));
+                items.Add(new FileSystemItem
+                {
+                    Path = key,
+                    Name = string.IsNullOrEmpty(name) ? key : name,
+                    IsDirectory = true,
+                    UseRealIcon = Directory.Exists(key),
+                    IsGroupMember = true,
+                    GroupId = group.Id,
+                });
+            }
+        }
+        return items;
+    }
+
     private static List<FileSystemItem> BuildHomeItems()
     {
         var items = new List<FileSystemItem>();
 
-        // お気に入り (先頭に表示)
-        foreach (var fav in AppSettings.Current.Favorites)
+        // お気に入り＋トップレベルのグループ (統一並び順で最上段に表示)
+        foreach (var key in AppSettings.Current.OrderedHomeKeys())
         {
-            if (!Directory.Exists(fav))
-                continue;
-            var name = System.IO.Path.GetFileName(fav.TrimEnd('\\'));
-            items.Add(new FileSystemItem
+            if (key.StartsWith("group:", StringComparison.Ordinal))
             {
-                Path = fav,
-                Name = string.IsNullOrEmpty(name) ? fav : name,
-                IsDirectory = true,
-                UseRealIcon = true,
-                IsFavoriteEntry = true,
-            });
+                var group = AppSettings.Current.FindGroup(key["group:".Length..]);
+                if (group is null)
+                    continue;
+                items.Add(new FileSystemItem
+                {
+                    Path = "group:" + group.Id,
+                    Name = group.Name,
+                    IsGroupEntry = true,
+                    GroupId = group.Id,
+                    MemberCount = group.Subgroups.Count + group.Paths.Count,
+                });
+            }
+            else
+            {
+                if (!Directory.Exists(key))
+                    continue;
+                var name = System.IO.Path.GetFileName(key.TrimEnd('\\'));
+                items.Add(new FileSystemItem
+                {
+                    Path = key,
+                    Name = string.IsNullOrEmpty(name) ? key : name,
+                    IsDirectory = true,
+                    UseRealIcon = true,
+                    IsFavoriteEntry = true,
+                });
+            }
         }
 
         void AddKnown(string name, string? path)

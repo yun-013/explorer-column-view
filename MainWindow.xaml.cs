@@ -84,6 +84,7 @@ public partial class MainWindow : Window
     private MainWindow? _floating;
     private TabModel? _floatingTab;
     private MainWindow? _mergeTarget;
+    private System.Windows.Threading.DispatcherTimer? _dragWatchdog;
 
     private void TabStrip_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
@@ -254,10 +255,21 @@ public partial class MainWindow : Window
         _floatingTab = tab;
         _mergeTarget = null;
 
-        // フレーム同期でカーソルを追跡 (キャプチャ不要・最も滑らか)
+        // 追従はフレーム同期で滑らかに (マウスキャプチャはしない = キャプション移動等を阻害しない)。
         CompositionTarget.Rendering += DragTick;
+
+        // 解放検出は描画に依存しない監視タイマーで確実に行う。
+        // CompositionTarget.Rendering はカーソル静止時に発火が止まり、その間に離すと
+        // 取りこぼして固まる → 描画に依存しない DispatcherTimer で必ず拾う (フリーズ防止の要)。
+        _dragWatchdog = new System.Windows.Threading.DispatcherTimer(System.Windows.Threading.DispatcherPriority.Input)
+        {
+            Interval = TimeSpan.FromMilliseconds(30),
+        };
+        _dragWatchdog.Tick += DragWatchdogTick;
+        _dragWatchdog.Start();
     }
 
+    /// <summary>フレームごとにフロートウィンドウをカーソルへ追従させる (滑らかな移動)。</summary>
     private void DragTick(object? sender, EventArgs e)
     {
         if (_floating is null)
@@ -275,10 +287,18 @@ public partial class MainWindow : Window
         // 結合先の上にいるときはより透かして、相手のタブ列ハイライトを見せる
         _floating.Opacity = _mergeTarget is not null ? 0.55 : 0.85;
 
-        // 左ボタンが離されたら確定
-        if ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) == 0)
+        if (!IsLeftButtonDown())
             EndFloatingDrag();
     }
+
+    /// <summary>描画が止まっても確実にボタン解放を検出する (フリーズ防止)。</summary>
+    private void DragWatchdogTick(object? sender, EventArgs e)
+    {
+        if (_floating is null || !IsLeftButtonDown())
+            EndFloatingDrag();
+    }
+
+    private static bool IsLeftButtonDown() => (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
 
     private void UpdateMergeTarget(NativePoint cursor)
     {
@@ -308,18 +328,25 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>ドラッグを確定する。追従と監視を止め、結合先があればタブを移して自分を閉じる。二重呼び出しは無視。</summary>
     private void EndFloatingDrag()
     {
         CompositionTarget.Rendering -= DragTick;
-
-        var floating = _floating;
-        if (floating is not null)
+        if (_dragWatchdog is not null)
         {
-            floating.Topmost = false;
-            floating.Opacity = 1.0;
+            _dragWatchdog.Stop();
+            _dragWatchdog.Tick -= DragWatchdogTick;
+            _dragWatchdog = null;
         }
 
-        if (_mergeTarget is not null && _floatingTab is not null && floating is not null)
+        var floating = _floating;
+        if (floating is null)
+            return;
+
+        floating.Topmost = false;
+        floating.Opacity = 1.0;
+
+        if (_mergeTarget is not null && _floatingTab is not null)
         {
             // 別ウィンドウのタブ列にドロップ → 結合 (運んできたタブを相手へ移し、自分は閉じる)
             _mergeTarget.SetMergeHighlight(false);
@@ -330,6 +357,19 @@ public partial class MainWindow : Window
         _floating = null;
         _floatingTab = null;
         _mergeTarget = null;
+    }
+
+    /// <summary>ドラッグ中に閉じられても、死んだウィンドウを掴み続けないよう追従/監視を後始末する。</summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        CompositionTarget.Rendering -= DragTick;
+        if (_dragWatchdog is not null)
+        {
+            _dragWatchdog.Stop();
+            _dragWatchdog.Tick -= DragWatchdogTick;
+            _dragWatchdog = null;
+        }
+        base.OnClosed(e);
     }
 
     /// <summary>別ウィンドウから運ばれてきたタブを受け取る (再結合)。</summary>
@@ -354,6 +394,150 @@ public partial class MainWindow : Window
     private async void Favorite_Click(object sender, RoutedEventArgs e)
         => await _vm.ToggleFavoriteAsync(null);
 
+    // ---- タブグループ ----
+
+    /// <summary>ツールバーのグループボタン: 新規作成の入口 (管理は各グループの右クリック)。</summary>
+    private void GroupsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu
+        {
+            PlacementTarget = GroupsButton,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom,
+        };
+
+        var createEmpty = new MenuItem { Header = "新しい空のグループ…" };
+        createEmpty.Click += async (_, _) => await CreateGroupFlow(null, null);
+        menu.Items.Add(createEmpty);
+
+        var current = _vm.FavoriteTarget;
+        if (current is not null)
+        {
+            var fromCurrent = new MenuItem { Header = "現在のフォルダーで新規グループ…" };
+            fromCurrent.Click += async (_, _) => await CreateGroupFlow(new[] { current }, null);
+            menu.Items.Add(fromCurrent);
+        }
+
+        var roots = _vm.OpenTabRoots();
+        if (roots.Count > 0)
+        {
+            var fromTabs = new MenuItem { Header = $"開いているタブから新規グループ… ({roots.Count})" };
+            fromTabs.Click += async (_, _) => await CreateGroupFlow(roots, null);
+            menu.Items.Add(fromTabs);
+        }
+
+        // 現在のフォルダーを既存グループへ追加 (深い階層でホーム列が隠れていても使える)
+        if (current is not null && _vm.Groups.Count > 0)
+        {
+            menu.Items.Add(new Separator());
+            var addTo = new MenuItem { Header = "現在のフォルダーをグループに追加" };
+            foreach (var (group, depth) in _vm.GroupsExcept(""))
+            {
+                var id = group.Id;
+                var mi = new MenuItem { Header = new string('　', depth) + group.Name };
+                mi.Click += async (_, _) => await _vm.AddCurrentFolderToGroupAsync(id);
+                addTo.Items.Add(mi);
+            }
+            menu.Items.Add(addTo);
+        }
+
+        menu.Items.Add(new Separator());
+        menu.Items.Add(new MenuItem
+        {
+            Header = "グループは左のホーム列に表示。クリックで中身を開き、右クリックで管理",
+            IsEnabled = false,
+        });
+
+        menu.IsOpen = true;
+    }
+
+    /// <summary>グループ見出しを右クリック: そのグループの管理メニュー。</summary>
+    private void ShowGroupContextMenu(FileSystemItem header, ListBox owner)
+    {
+        if (header.GroupId is not { } id)
+            return;
+        var menu = new ContextMenu { PlacementTarget = owner };
+
+        var open = new MenuItem { Header = "すべてタブで開く (サブグループ含む)" };
+        open.Click += async (_, _) => await _vm.OpenGroupAsync(id);
+        menu.Items.Add(open);
+
+        var openDirect = new MenuItem { Header = "直下のフォルダーのみ開く" };
+        openDirect.Click += async (_, _) => await _vm.OpenGroupDirectAsync(id);
+        menu.Items.Add(openDirect);
+
+        menu.Items.Add(new Separator());
+
+        var add = new MenuItem { Header = "現在のフォルダーを追加", IsEnabled = _vm.FavoriteTarget is not null };
+        add.Click += async (_, _) => await _vm.AddCurrentFolderToGroupAsync(id);
+        menu.Items.Add(add);
+
+        var newSub = new MenuItem { Header = "新しいサブグループ…" };
+        newSub.Click += async (_, _) => await CreateGroupFlow(null, id);
+        menu.Items.Add(newSub);
+
+        menu.Items.Add(BuildMoveIntoMenu(id));
+
+        menu.Items.Add(new Separator());
+
+        var rename = new MenuItem { Header = "名前を変更…" };
+        rename.Click += async (_, _) => await RenameGroupFlow(id, header.Name);
+        menu.Items.Add(rename);
+
+        var delete = new MenuItem { Header = "グループを削除" };
+        delete.Click += async (_, _) => await _vm.DeleteGroupAsync(id);
+        menu.Items.Add(delete);
+
+        menu.IsOpen = true;
+    }
+
+    /// <summary>「別のグループへ移動」サブメニュー (自分とその子孫は除外)。</summary>
+    private MenuItem BuildMoveIntoMenu(string id)
+    {
+        var move = new MenuItem { Header = "別のグループへ移動" };
+
+        var toTop = new MenuItem { Header = "(トップレベルへ)" };
+        toTop.Click += async (_, _) => await _vm.MoveGroupToTopAsync(id);
+        move.Items.Add(toTop);
+
+        var any = false;
+        foreach (var (group, depth) in _vm.GroupsExcept(id))
+        {
+            any = true;
+            var targetId = group.Id;
+            var mi = new MenuItem { Header = new string('　', depth) + group.Name };
+            mi.Click += async (_, _) => await _vm.MoveGroupIntoAsync(id, targetId);
+            move.Items.Add(mi);
+        }
+        if (!any)
+            toTop.Header = "(移動先のグループがありません — トップレベルへ)";
+        return move;
+    }
+
+    /// <summary>グループメンバー (フォルダー) を右クリック: グループから外す。</summary>
+    private void ShowGroupMemberContextMenu(FileSystemItem member, ListBox owner)
+    {
+        if (member.GroupId is not { } id)
+            return;
+        var menu = new ContextMenu { PlacementTarget = owner };
+        var remove = new MenuItem { Header = "グループから削除" };
+        remove.Click += async (_, _) => await _vm.RemoveFromGroupAsync(id, member.Path);
+        menu.Items.Add(remove);
+        menu.IsOpen = true;
+    }
+
+    private async Task CreateGroupFlow(IEnumerable<string>? seed, string? parentId)
+    {
+        var title = parentId is null ? "新しいグループ" : "新しいサブグループ";
+        if (PromptText(title, "グループ名:", "") is { } name && !string.IsNullOrWhiteSpace(name))
+            await _vm.CreateGroupAsync(name, seed, parentId);
+    }
+
+    private async Task RenameGroupFlow(string id, string currentName)
+    {
+        if (PromptText("グループ名の変更", "新しい名前:", currentName) is { } name && name != currentName)
+            await _vm.RenameGroupAsync(id, name);
+    }
+
     // ---- ナビゲーション (戻る / 進む / 上へ) ----
 
     private async void Back_Click(object sender, RoutedEventArgs e) => await _vm.GoBackAsync();
@@ -368,6 +552,21 @@ public partial class MainWindow : Window
             return;
 
         var item = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as FileSystemItem;
+
+        // タブグループの見出し・メンバーは独自の管理メニューを出す (シェルメニューではなく)
+        if (item is { IsGroupEntry: true })
+        {
+            e.Handled = true;
+            ShowGroupContextMenu(item, lb);
+            return;
+        }
+        if (item is { IsGroupMember: true })
+        {
+            e.Handled = true;
+            ShowGroupMemberContextMenu(item, lb);
+            return;
+        }
+
         if (item is not null)
             lb.SelectedItem = item;
 
@@ -388,7 +587,7 @@ public partial class MainWindow : Window
                 await _vm.RefreshColumnsAsync(new[] { refreshDir });
                 break;
             case ShellMenuResult.Rename when item is not null:
-                if (PromptRename(item.Name) is { } newName)
+                if (PromptText("名前の変更", "新しい名前:", item.Name, selectStem: true) is { } newName)
                     await _vm.RenameAsync(item, newName);
                 break;
             case ShellMenuResult.AddFavorite:
@@ -405,11 +604,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private string? PromptRename(string current)
+    /// <summary>1 行のテキスト入力ダイアログ。selectStem=true なら拡張子を除いて選択する (名前変更用)。</summary>
+    private string? PromptText(string title, string label, string initial, bool selectStem = false)
     {
         var dialog = new Window
         {
-            Title = "名前の変更",
+            Title = title,
             Width = 380,
             SizeToContent = SizeToContent.Height,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
@@ -419,7 +619,7 @@ public partial class MainWindow : Window
             Background = Brushes.White,
         };
         var panel = new StackPanel { Margin = new Thickness(14) };
-        var box = new TextBox { Text = current, Padding = new Thickness(4), FontSize = 13 };
+        var box = new TextBox { Text = initial, Padding = new Thickness(4), FontSize = 13 };
         var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -430,7 +630,7 @@ public partial class MainWindow : Window
         var cancel = new Button { Content = "キャンセル", Width = 84, Height = 28, IsCancel = true };
         row.Children.Add(ok);
         row.Children.Add(cancel);
-        panel.Children.Add(new TextBlock { Text = "新しい名前:", Margin = new Thickness(0, 0, 0, 6) });
+        panel.Children.Add(new TextBlock { Text = label, Margin = new Thickness(0, 0, 0, 6) });
         panel.Children.Add(box);
         panel.Children.Add(row);
         dialog.Content = panel;
@@ -440,8 +640,15 @@ public partial class MainWindow : Window
         dialog.Loaded += (_, _) =>
         {
             box.Focus();
-            var dot = current.LastIndexOf('.');
-            box.Select(0, dot > 0 ? dot : current.Length); // 拡張子を除いて選択
+            if (selectStem)
+            {
+                var dot = initial.LastIndexOf('.');
+                box.Select(0, dot > 0 ? dot : initial.Length); // 拡張子を除いて選択
+            }
+            else
+            {
+                box.SelectAll();
+            }
         };
         return dialog.ShowDialog() == true ? result : null;
     }
@@ -527,21 +734,34 @@ public partial class MainWindow : Window
     private Point _dragStart;
     private FileSystemItem? _dragCandidate;
     private FileSystemItem? _favDragCandidate;
+    private FileSystemItem? _groupDragCandidate;
+    private FileSystemItem? _memberDragCandidate;
     private FileSystemItem? _reclickItem;
     private bool _isDragging;
     private ListBoxItem? _dropHighlight;
     private ListBoxItem? _insertIndicator;
 
-    /// <summary>ホーム列のお気に入りを並べ替えるときのドラッグデータ形式。</summary>
-    private const string FavoriteFormat = "ColumnView.FavoriteReorder";
+    private enum GroupDropMode { None, Before, After, Onto }
+
+    /// <summary>ホーム列・グループ列の統一並べ替え / 入れ子化。データ = キー (パス or "group:"+Id)。
+    /// ドロップ先の列がコンテナ (ホーム or どのグループ) を決める。</summary>
+    private const string HomeFormat = "ColumnView.HomeReorder";
 
     private void Column_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _dragStart = e.GetPosition(null);
         _reclickItem = null;
+        _groupDragCandidate = null;
+        _memberDragCandidate = null;
         var item = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as FileSystemItem;
-        // ドライブ・特殊フォルダー・お気に入りはナビゲーション用なのでファイル D&D の対象外
-        _dragCandidate = item is { UseRealIcon: false } ? item : null;
+
+        // グループ見出し: クリックは通常選択 (= 中身を次の列に展開)、ドラッグは並べ替え / 入れ子化
+        _groupDragCandidate = item is { IsGroupEntry: true } ? item : null;
+        // グループメンバー (フォルダー): クリックはナビゲーション、ドラッグはグループ内の並べ替え
+        _memberDragCandidate = item is { IsGroupMember: true } ? item : null;
+
+        // ドライブ・特殊フォルダー・お気に入り・グループはナビゲーション用なのでファイル D&D の対象外
+        _dragCandidate = item is { UseRealIcon: false, IsGroupEntry: false } ? item : null;
         // お気に入りはホーム列内での並べ替え専用ドラッグ対象
         _favDragCandidate = item is { IsFavoriteEntry: true } ? item : null;
 
@@ -565,13 +785,16 @@ public partial class MainWindow : Window
         }
         _reclickItem = null;
         _favDragCandidate = null;
+        _groupDragCandidate = null;
+        _memberDragCandidate = null;
     }
 
     private void Column_PreviewMouseMove(object sender, MouseEventArgs e)
     {
         if (_isDragging || e.LeftButton != MouseButtonState.Pressed)
             return;
-        if (_dragCandidate is null && _favDragCandidate is null)
+        if (_dragCandidate is null && _favDragCandidate is null
+            && _groupDragCandidate is null && _memberDragCandidate is null)
             return;
 
         var pos = e.GetPosition(null);
@@ -579,22 +802,21 @@ public partial class MainWindow : Window
             Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
             return;
 
-        // お気に入りはホーム列内での並べ替え (パスを運んで挿入位置で入れ替え)
-        if (_favDragCandidate is not null)
+        // グループ見出し / メンバー / お気に入り: すべて統一並べ替え (HomeFormat、キーで運ぶ)。
+        // ドロップ先の列がコンテナ (ホーム列 or グループ列) を決める。
+        if (_groupDragCandidate is { GroupId: { } gid })
         {
-            var favData = new DataObject(FavoriteFormat, _favDragCandidate.Path);
-            _isDragging = true;
-            try
-            {
-                DragDrop.DoDragDrop((DependencyObject)sender, favData, DragDropEffects.Move);
-            }
-            finally
-            {
-                _isDragging = false;
-                _favDragCandidate = null;
-                _dragCandidate = null;
-                ClearInsertIndicator();
-            }
+            RunReorderDrag(sender, new DataObject(HomeFormat, "group:" + gid));
+            return;
+        }
+        if (_memberDragCandidate is { } member)
+        {
+            RunReorderDrag(sender, new DataObject(HomeFormat, member.Path));
+            return;
+        }
+        if (_favDragCandidate is { } fav)
+        {
+            RunReorderDrag(sender, new DataObject(HomeFormat, fav.Path));
             return;
         }
 
@@ -626,14 +848,44 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>並べ替え系ドラッグ (お気に入り / グループ / メンバー) の共通処理。</summary>
+    private void RunReorderDrag(object sender, DataObject data)
+    {
+        _isDragging = true;
+        try
+        {
+            DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Move);
+        }
+        finally
+        {
+            _isDragging = false;
+            _favDragCandidate = null;
+            _groupDragCandidate = null;
+            _memberDragCandidate = null;
+            _dragCandidate = null;
+            ClearInsertIndicator();
+            ClearDropHighlight();
+        }
+    }
+
     private void Column_DragOver(object sender, DragEventArgs e)
     {
-        if (e.Data.GetDataPresent(FavoriteFormat))
+        if (e.Data.GetDataPresent(HomeFormat))
         {
-            var source = e.Data.GetData(FavoriteFormat) as string ?? "";
-            var container = ResolveFavoriteDrop(sender, e, source, out var after);
-            e.Effects = container is not null ? DragDropEffects.Move : DragDropEffects.None;
-            SetInsertIndicator(container, after);
+            var key = e.Data.GetData(HomeFormat) as string ?? "";
+            var container = ResolveChildDrop(sender, e, key, out var mode);
+            e.Effects = mode == GroupDropMode.None ? DragDropEffects.None : DragDropEffects.Move;
+            ShowGroupDropFeedback(container, mode);
+            e.Handled = true;
+            return;
+        }
+
+        // フォルダーをグループ見出しの上にドラッグ → そのグループへ追加
+        if (GroupAddTarget(e) is { } addTarget)
+        {
+            e.Effects = DragDropEffects.Move;
+            ClearInsertIndicator();
+            SetOntoHighlight(addTarget);
             e.Handled = true;
             return;
         }
@@ -641,6 +893,18 @@ public partial class MainWindow : Window
         e.Effects = ResolveDropEffect(sender, e);
         UpdateDropHighlight(e);
         e.Handled = true;
+    }
+
+    /// <summary>FileDrop のフォルダーがグループ見出しの上にあるなら、その見出しコンテナを返す。</summary>
+    private static ListBoxItem? GroupAddTarget(DragEventArgs e)
+    {
+        if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+            return null;
+        var container = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+        if (container?.DataContext is not FileSystemItem { IsGroupEntry: true })
+            return null;
+        var sources = e.Data.GetData(DataFormats.FileDrop) as string[] ?? Array.Empty<string>();
+        return sources.Any(System.IO.Directory.Exists) ? container : null;
     }
 
     private void Column_DragLeave(object sender, DragEventArgs e)
@@ -654,22 +918,38 @@ public partial class MainWindow : Window
         ClearDropHighlight();
         ClearInsertIndicator();
 
-        if (e.Data.GetDataPresent(FavoriteFormat))
+        if (e.Data.GetDataPresent(HomeFormat))
         {
-            var source = e.Data.GetData(FavoriteFormat) as string;
-            if (source is null)
+            var key = e.Data.GetData(HomeFormat) as string;
+            if (key is null)
                 return;
-            var container = ResolveFavoriteDrop(sender, e, source, out var after);
+            var container = ResolveChildDrop(sender, e, key, out var mode);
             if (container?.DataContext is FileSystemItem target)
             {
+                var targetKey = target.IsGroupEntry ? "group:" + target.GroupId : target.Path;
+                // ドロップ先の列がコンテナ: ホーム列=null、グループ列=そのグループ Id
+                var containerGroupId = (sender as ListBox)?.DataContext is ColumnModel cm ? cm.GroupId : null;
                 e.Handled = true;
-                await _vm.MoveFavoriteAsync(source, target.Path, after);
+                if (mode == GroupDropMode.Onto && key.StartsWith("group:", StringComparison.Ordinal)
+                    && target is { IsGroupEntry: true, GroupId: { } tid })
+                    await _vm.MoveGroupIntoAsync(key["group:".Length..], tid);
+                else if (mode is GroupDropMode.Before or GroupDropMode.After)
+                    await _vm.MoveChildAsync(containerGroupId, key, targetKey, mode == GroupDropMode.After);
             }
             return;
         }
 
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
             return;
+
+        // フォルダーをグループ見出しにドロップ → そのグループへ追加
+        if (GroupAddTarget(e) is { DataContext: FileSystemItem { GroupId: { } addId } })
+        {
+            var sources0 = (string[])e.Data.GetData(DataFormats.FileDrop);
+            e.Handled = true;
+            await _vm.AddPathsToGroupAsync(addId, sources0);
+            return;
+        }
 
         var effect = ResolveDropEffect(sender, e);
         if (effect == DragDropEffects.None)
@@ -734,23 +1014,58 @@ public partial class MainWindow : Window
         _dropHighlight = null;
     }
 
-    /// <summary>お気に入りの並べ替えで、カーソル下のお気に入り項目とその前後どちらに差し込むかを求める。</summary>
-    private static ListBoxItem? ResolveFavoriteDrop(object sender, DragEventArgs e, string source, out bool after)
+    /// <summary>統一並べ替えのドロップ位置を求める。ホーム列・グループ列の両方で動作。
+    /// 対象はお気に入り / グループ見出し / メンバー。グループ→グループの中央=入れ子化。</summary>
+    private static ListBoxItem? ResolveChildDrop(object sender, DragEventArgs e, string sourceKey, out GroupDropMode mode)
     {
-        after = false;
-        // 並べ替えはホーム列 (Path == null) 内でのみ許可する
+        mode = GroupDropMode.None;
+        // ホーム列 (Path==null,GroupId==null) または グループ列 (GroupId!=null)。フォルダー列(Path!=null)は対象外
         if (sender is not ListBox { DataContext: ColumnModel { Path: null } })
             return null;
 
         var container = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
-        if (container?.DataContext is not FileSystemItem { IsFavoriteEntry: true } item)
-            return null;
-        // 自分自身の上にいるときは無効 (移動しても変化しないため)
-        if (string.Equals(item.Path, source, StringComparison.OrdinalIgnoreCase))
-            return null;
+        if (container?.DataContext is not FileSystemItem target
+            || (!target.IsFavoriteEntry && !target.IsGroupEntry && !target.IsGroupMember))
+            return null; // 並べ替え対象はお気に入り / グループ / メンバーのみ
 
-        after = e.GetPosition(container).Y > container.ActualHeight / 2;
+        var targetKey = target.IsGroupEntry ? "group:" + target.GroupId : target.Path;
+        if (string.Equals(targetKey, sourceKey, StringComparison.Ordinal))
+            return null; // 自分自身の上は無効
+
+        var y = e.GetPosition(container).Y;
+        var h = container.ActualHeight;
+        // 入れ子化はグループ→グループのときだけ (中央=Onto)
+        if (sourceKey.StartsWith("group:", StringComparison.Ordinal) && target.IsGroupEntry)
+            mode = y < h * 0.25 ? GroupDropMode.Before : y > h * 0.75 ? GroupDropMode.After : GroupDropMode.Onto;
+        else
+            mode = y > h / 2 ? GroupDropMode.After : GroupDropMode.Before;
         return container;
+    }
+
+    /// <summary>ドラッグ中の視覚フィードバック: 入れ子化は枠、並べ替えは挿入線。</summary>
+    private void ShowGroupDropFeedback(ListBoxItem? container, GroupDropMode mode)
+    {
+        if (mode == GroupDropMode.Onto)
+        {
+            ClearInsertIndicator();
+            SetOntoHighlight(container);
+        }
+        else
+        {
+            ClearDropHighlight();
+            SetInsertIndicator(container, mode == GroupDropMode.After);
+        }
+    }
+
+    private void SetOntoHighlight(ListBoxItem? container)
+    {
+        if (ReferenceEquals(container, _dropHighlight))
+            return;
+        if (_dropHighlight is not null)
+            DragDropHelper.SetDropHighlight(_dropHighlight, false);
+        _dropHighlight = container;
+        if (_dropHighlight is not null)
+            DragDropHelper.SetDropHighlight(_dropHighlight, true);
     }
 
     private void SetInsertIndicator(ListBoxItem? container, bool after)

@@ -281,7 +281,7 @@ public class MainViewModel : ObservableObject
         var added = _settings.ToggleFavorite(Path.GetFullPath(path));
         Raise(nameof(IsCurrentFavorite));
         StatusText = added ? $"お気に入りに追加: {path}" : $"お気に入りから削除: {path}";
-        await RefreshHomeColumnsAsync();
+        await RefreshGroupColumnsAsync();
     }
 
     /// <summary>お気に入りをドラッグで並べ替える (source を target の前後へ移動)。</summary>
@@ -290,10 +290,192 @@ public class MainViewModel : ObservableObject
         if (!_settings.MoveFavorite(source, target, insertAfter))
             return;
         StatusText = "お気に入りを並べ替えました";
-        await RefreshHomeColumnsAsync();
+        await RefreshGroupColumnsAsync();
     }
 
-    private async Task RefreshHomeColumnsAsync()
+    // ---- タブグループ (入れ子・ID 管理) ----
+
+    /// <summary>トップレベルのグループ一覧 (ツールバーのメニュー構築用)。</summary>
+    public IReadOnlyList<FavoriteGroup> Groups => _settings.Groups;
+
+    public FavoriteGroup? FindGroup(string id) => _settings.FindGroup(id);
+
+    /// <summary>移動先候補 (source 自身とその子孫を除く)。深さ付き。</summary>
+    public IEnumerable<(FavoriteGroup Group, int Depth)> GroupsExcept(string id)
+        => _settings.EnumerateGroupsExcept(id);
+
+    /// <summary>グループ配下 (サブグループ含む) の全フォルダーをそれぞれ新しいタブで開く。</summary>
+    public async Task OpenGroupAsync(string id)
+    {
+        var group = _settings.FindGroup(id);
+        if (group is null)
+            return;
+        var paths = _settings.CollectPaths(id).Where(Directory.Exists).ToList();
+        if (paths.Count == 0)
+        {
+            StatusText = $"『{group.Name}』に開けるフォルダーがありません";
+            return;
+        }
+        foreach (var path in paths)
+            await NewTabAsync(path);
+        StatusText = $"グループ『{group.Name}』を {paths.Count} 個のタブで開きました";
+    }
+
+    /// <summary>グループ直下のフォルダーだけをタブで開く (サブグループは含めない)。</summary>
+    public async Task OpenGroupDirectAsync(string id)
+    {
+        var group = _settings.FindGroup(id);
+        if (group is null)
+            return;
+        var paths = group.Paths.Where(Directory.Exists).ToList();
+        if (paths.Count == 0)
+        {
+            StatusText = $"『{group.Name}』の直下に開けるフォルダーがありません";
+            return;
+        }
+        foreach (var path in paths)
+            await NewTabAsync(path);
+        StatusText = $"グループ『{group.Name}』の直下 {paths.Count} 個をタブで開きました";
+    }
+
+    /// <summary>ホーム列 / グループ列の項目を統一順で並べ替える (containerGroupId==null はホーム列)。</summary>
+    public async Task MoveChildAsync(string? containerGroupId, string sourceKey, string targetKey, bool insertAfter)
+    {
+        if (_settings.MoveChild(containerGroupId, sourceKey, targetKey, insertAfter))
+        {
+            StatusText = "並べ替えました";
+            await RefreshGroupColumnsAsync();
+        }
+    }
+
+    /// <summary>新しいグループを作成する。parentId 指定で入れ子、seed でフォルダーを初期登録。</summary>
+    public async Task CreateGroupAsync(string name, IEnumerable<string>? seed = null, string? parentId = null)
+    {
+        var group = _settings.CreateGroup(name, parentId);
+        if (group is null)
+        {
+            StatusText = "グループを作成できませんでした (名前が空、または親が見つかりません)";
+            return;
+        }
+        if (seed is not null)
+            foreach (var path in seed)
+                _settings.AddToGroup(group.Id, path);
+        StatusText = $"グループ『{group.Name}』を作成しました";
+        await RefreshGroupColumnsAsync();
+    }
+
+    public async Task RenameGroupAsync(string id, string newName)
+    {
+        if (!_settings.RenameGroup(id, newName))
+        {
+            StatusText = "グループ名を変更できませんでした";
+            return;
+        }
+        StatusText = "グループ名を変更しました";
+        await RefreshGroupColumnsAsync();
+    }
+
+    public async Task DeleteGroupAsync(string id)
+    {
+        var name = _settings.FindGroup(id)?.Name;
+        if (!_settings.DeleteGroup(id))
+            return;
+        StatusText = $"グループ『{name}』を削除しました";
+        await RefreshGroupColumnsAsync();
+    }
+
+    /// <summary>現在表示中のフォルダーをグループに追加する。</summary>
+    public async Task AddCurrentFolderToGroupAsync(string id)
+    {
+        var target = FavoriteTarget;
+        if (target is null)
+        {
+            StatusText = "追加できるフォルダーがありません";
+            return;
+        }
+        var groupName = _settings.FindGroup(id)?.Name ?? "";
+        var label = Path.GetFileName(target.TrimEnd('\\'));
+        StatusText = _settings.AddToGroup(id, target)
+            ? $"『{(string.IsNullOrEmpty(label) ? target : label)}』を『{groupName}』に追加しました"
+            : $"『{groupName}』には既に含まれています";
+        await RefreshGroupColumnsAsync();
+    }
+
+    public async Task RemoveFromGroupAsync(string id, string path)
+    {
+        if (_settings.RemoveFromGroup(id, path))
+        {
+            StatusText = "グループからフォルダーを削除しました";
+            await RefreshGroupColumnsAsync();
+        }
+    }
+
+    /// <summary>フォルダー群をグループに追加する (グループ見出しへのドラッグ＆ドロップ用)。</summary>
+    public async Task AddPathsToGroupAsync(string id, IEnumerable<string> paths)
+    {
+        if (_settings.FindGroup(id) is not { } group)
+            return;
+        var added = 0;
+        foreach (var path in paths)
+            if (Directory.Exists(path) && _settings.AddToGroup(id, path))
+                added++;
+        StatusText = added > 0
+            ? $"『{group.Name}』に {added} 個のフォルダーを追加しました"
+            : $"『{group.Name}』には既に含まれています";
+        await RefreshGroupColumnsAsync();
+    }
+
+    /// <summary>グループをドラッグで並べ替える (source を target の前後へ)。</summary>
+    public async Task MoveGroupRelativeAsync(string sourceId, string targetId, bool insertAfter)
+    {
+        if (_settings.MoveGroupRelative(sourceId, targetId, insertAfter))
+        {
+            StatusText = "グループを並べ替えました";
+            await RefreshGroupColumnsAsync();
+        }
+    }
+
+    /// <summary>グループを別のグループの入れ子にする。</summary>
+    public async Task MoveGroupIntoAsync(string sourceId, string targetId)
+    {
+        if (_settings.MoveGroupInto(sourceId, targetId))
+        {
+            var name = _settings.FindGroup(targetId)?.Name;
+            StatusText = $"『{name}』の中に移動しました";
+            await RefreshGroupColumnsAsync();
+        }
+    }
+
+    /// <summary>グループをトップレベルへ戻す。</summary>
+    public async Task MoveGroupToTopAsync(string sourceId)
+    {
+        if (_settings.MoveGroupToTop(sourceId))
+        {
+            StatusText = "グループをトップレベルへ移動しました";
+            await RefreshGroupColumnsAsync();
+        }
+    }
+
+    /// <summary>グループ内のメンバーフォルダーをドラッグで並べ替える。</summary>
+    public async Task MovePathInGroupAsync(string groupId, string source, string target, bool insertAfter)
+    {
+        if (_settings.MovePathInGroup(groupId, source, target, insertAfter))
+        {
+            StatusText = "メンバーを並べ替えました";
+            await RefreshGroupColumnsAsync();
+        }
+    }
+
+    /// <summary>現在開いている各タブのルートフォルダー一覧 (ホームタブは除外)。</summary>
+    public List<string> OpenTabRoots()
+        => Tabs.Select(t => t.Columns.FirstOrDefault()?.Path)
+            .Where(p => p is not null && Directory.Exists(p!))
+            .Select(p => p!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    /// <summary>ホーム列・グループ列 (どちらも Path==null) を再読み込みする (選択は保持)。</summary>
+    private async Task RefreshGroupColumnsAsync()
     {
         _navigating = true;
         try
@@ -411,6 +593,20 @@ public class MainViewModel : ObservableObject
         // 選択列より右の列を畳む
         while (tab.Columns.Count > index + 1)
             tab.Columns.RemoveAt(tab.Columns.Count - 1);
+
+        // グループ見出し: 中身 (サブグループ＋フォルダー) を次の列に展開する。
+        // CurrentPath は据え置き (直前のフォルダーを「現在のフォルダー」として追加できるように)。
+        if (item.IsGroupEntry)
+        {
+            if (item.GroupId is not { } gid || _settings.FindGroup(gid) is not { } group)
+                return;
+            var groupColumn = new ColumnModel(group);
+            tab.Columns.Add(groupColumn);
+            tab.Title = TrimTitle(group.Name);
+            await groupColumn.LoadAsync(ShowHidden, CurrentComparison);
+            UpdateStatus(groupColumn);
+            return;
+        }
 
         CurrentPath = item.Path;
 
@@ -549,6 +745,13 @@ public class MainViewModel : ObservableObject
         if (column.Error is not null)
         {
             StatusText = column.Error;
+            return;
+        }
+        if (column.GroupId is not null)
+        {
+            var subs = column.Items.Count(i => i.IsGroupEntry);
+            var folders = column.Items.Count(i => i.IsGroupMember);
+            StatusText = $"{subs} サブグループ、{folders} フォルダー";
             return;
         }
         var dirs = column.Items.Count(i => i.IsDirectory);
