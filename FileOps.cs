@@ -94,7 +94,9 @@ public static class FileOps
     // ---- アプリの退避ごみ箱 (ごみ箱が使えない NAS・ネットワークドライブ・リムーバブル用) ----
 
     private const string AppTrashName = ".ColumnViewTrash";
-    private static readonly TimeSpan AppTrashRetention = TimeSpan.FromDays(30);
+
+    private static TimeSpan AppTrashRetention
+        => TimeSpan.FromDays(Math.Max(1, AppSettings.Current.TrashRetentionDays));
 
     /// <summary>この場所の削除が Windows のごみ箱に入るか。
     /// UNC・ネットワークドライブ・リムーバブルはごみ箱が無く、シェルに任せると完全削除になる。</summary>
@@ -139,9 +141,13 @@ public static class FileOps
                 Directory.CreateDirectory(opDir);
                 try
                 {
-                    File.SetAttributes(trashRoot, File.GetAttributes(trashRoot) | FileAttributes.Hidden);
+                    // Hidden+System で Windows のエクスプローラーからはまず見えない
+                    // (Mac/Linux クライアントにはドット始まりの名前で隠れる)
+                    File.SetAttributes(trashRoot,
+                        File.GetAttributes(trashRoot) | FileAttributes.Hidden | FileAttributes.System);
                 }
                 catch { /* 属性を付けられなくても続行 */ }
+                AppSettings.Current.RegisterTrashRoot(group.Key); // 起動時の掃除の巡回先として記録
             }
             catch (Exception)
             {
@@ -185,7 +191,22 @@ public static class FileOps
         return performed;
     }
 
-    /// <summary>退避ごみ箱の古い世代を削除する (フォルダー名の日時プレフィックスで判定)。</summary>
+    /// <summary>起動時: 退避ごみ箱を作ったことのある全ボリュームを掃除する (背景スレッドで呼ぶ)。</summary>
+    public static void PurgeAllTrashRoots()
+    {
+        foreach (var root in AppSettings.Current.TrashRoots.ToList())
+        {
+            try
+            {
+                var trashRoot = Path.Combine(root, AppTrashName);
+                if (Directory.Exists(trashRoot)) // NAS がオフラインならスキップ (次回に持ち越し)
+                    PurgeOldTrash(trashRoot);
+            }
+            catch { /* 到達できないボリュームは無視 */ }
+        }
+    }
+
+    /// <summary>退避ごみ箱の古い世代 (保持日数超) と、取り消し済みで空になった世代を削除する。</summary>
     private static void PurgeOldTrash(string trashRoot)
     {
         try
@@ -197,7 +218,7 @@ public static class FileOps
                     || !DateTime.TryParseExact(name[..15], "yyyyMMdd-HHmmss", null,
                         System.Globalization.DateTimeStyles.None, out var stamp))
                     continue;
-                if (DateTime.Now - stamp > AppTrashRetention)
+                if (DateTime.Now - stamp > AppTrashRetention || IsTrashOpEmpty(dir))
                 {
                     try { Directory.Delete(dir, recursive: true); }
                     catch { /* 使用中などは次回に持ち越し */ }
@@ -205,6 +226,20 @@ public static class FileOps
             }
         }
         catch { /* 掃除の失敗は無視 */ }
+    }
+
+    /// <summary>Ctrl+Z で全部戻されて控え (manifest.txt) しか残っていない世代か。</summary>
+    private static bool IsTrashOpEmpty(string opDir)
+    {
+        try
+        {
+            return Directory.EnumerateFileSystemEntries(opDir)
+                .All(e => string.Equals(Path.GetFileName(e), "manifest.txt", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     // ---- 削除 (SHFileOperation: 複数項目を 1 回のシェル操作で処理) ----

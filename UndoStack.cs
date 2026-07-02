@@ -107,6 +107,9 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
                 affected.Add(destDir);
             try
             {
+                // 移動先の親が消えていても戻せるように作り直す (掃除済みの退避フォルダーへのやり直し等)
+                if (Path.GetDirectoryName(source.TrimEnd('\\')) is { Length: > 0 } parent)
+                    Directory.CreateDirectory(parent);
                 if (Directory.Exists(dest))
                     FileSystem.MoveDirectory(dest, source, UIOption.AllDialogs);
                 else if (File.Exists(dest))

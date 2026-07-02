@@ -867,21 +867,35 @@ public class MainViewModel : ObservableObject
                 done += recyclable.Count;
             }
         }
+        var permanentDone = 0;
         if (trashable.Count > 0)
         {
-            var performed = FileOps.MoveToAppTrash(trashable, out var e);
-            err ??= e;
-            foreach (var (source, _) in performed)
-                if (Path.GetDirectoryName(source) is { } dir)
-                    affectedAll.Add(dir);
-            if (performed.Count > 0)
+            if (_settings.UseAppTrash)
             {
-                UndoStack.Push(new MoveOp(performed, "削除"));
-                done += performed.Count;
+                var performed = FileOps.MoveToAppTrash(trashable, out var e);
+                err ??= e;
+                foreach (var (source, _) in performed)
+                    if (Path.GetDirectoryName(source) is { } dir)
+                        affectedAll.Add(dir);
+                if (performed.Count > 0)
+                {
+                    UndoStack.Push(new MoveOp(performed, "削除"));
+                    done += performed.Count;
+                }
+            }
+            else
+            {
+                // 退避を使わない設定: シェルに任せる (ごみ箱が無い場所なので完全削除の警告が出る)
+                affectedAll.UnionWith(FileOps.Delete(trashable, permanent: false, ownerHwnd, out var e));
+                err ??= e;
+                if (e is null)
+                    permanentDone += trashable.Count;
             }
         }
 
-        StatusText = err ?? $"ごみ箱へ移動しました: {done} 個";
+        StatusText = err ?? (permanentDone > 0 && done == 0
+            ? $"削除しました: {permanentDone} 個"
+            : $"ごみ箱へ移動しました: {done} 個");
         await RefreshColumnsAsync(affectedAll);
     }
 

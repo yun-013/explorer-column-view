@@ -28,6 +28,25 @@ public class AppSettings
     /// キー: お気に入り=パス、グループ="group:"+Id。未登録のものは末尾。</summary>
     public List<string> HomeOrder { get; set; } = new();
 
+    // ---- 退避ごみ箱 (ごみ箱の無い NAS・リムーバブル用) ----
+
+    /// <summary>false にすると退避せず、シェルの警告付き完全削除にする (取り消し不可)。</summary>
+    public bool UseAppTrash { get; set; } = true;
+
+    /// <summary>退避ごみ箱の保持日数。過ぎたものは起動時と削除時に掃除される。</summary>
+    public int TrashRetentionDays { get; set; } = 30;
+
+    /// <summary>退避ごみ箱を作ったことのあるボリューム (起動時の掃除の巡回先)。</summary>
+    public List<string> TrashRoots { get; set; } = new();
+
+    public void RegisterTrashRoot(string root)
+    {
+        if (TrashRoots.Any(r => string.Equals(r, root, StringComparison.OrdinalIgnoreCase)))
+            return;
+        TrashRoots.Add(root);
+        Save();
+    }
+
     // ---- セッション復元 ----
 
     /// <summary>起動時に前回のタブ構成を復元するか。</summary>
