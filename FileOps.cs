@@ -14,11 +14,14 @@ public static class FileOps
     /// <summary>
     /// <paramref name="sources"/> を <paramref name="targetDir"/> へ移動 / コピーする。
     /// 戻り値は再読み込みすべきフォルダー (移動元の親と移動先)。
+    /// <paramref name="performed"/> に実際に処理できた (元, 先) を返す (Ctrl+Z 用)。
     /// </summary>
     public static IReadOnlyCollection<string> Transfer(
-        IEnumerable<string> sources, string targetDir, bool copy, out string? error)
+        IEnumerable<string> sources, string targetDir, bool copy,
+        out string? error, out List<(string Source, string Dest)> performed)
     {
         error = null;
+        performed = new List<(string, string)>();
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetDir };
 
         foreach (var src in sources)
@@ -61,6 +64,7 @@ public static class FileOps
                     if (parent is not null)
                         affected.Add(parent);
                 }
+                performed.Add((trimmed, dest));
             }
             catch (OperationCanceledException)
             {

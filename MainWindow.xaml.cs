@@ -1301,6 +1301,14 @@ public partial class MainWindow : Window
                     RefreshClipboardMarksAllWindows();
                 }
                 break;
+            case Key.Z:
+                // 直前のファイル操作を取り消す (テキスト編集中はネイティブの Undo を妨げない)
+                if (Keyboard.FocusedElement is not TextBox)
+                {
+                    e.Handled = true;
+                    await _vm.UndoAsync();
+                }
+                break;
         }
     }
 

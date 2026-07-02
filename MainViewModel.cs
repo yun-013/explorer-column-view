@@ -91,6 +91,7 @@ public class MainViewModel : ObservableObject
                 Directory.Move(item.Path, dest);
             else
                 File.Move(item.Path, dest);
+            UndoStack.Push(new RenameOp(item.Path, dest));
             StatusText = $"名前を変更しました: {newName}";
             await RefreshColumnsAsync(new[] { dir });
         }
@@ -762,13 +763,36 @@ public class MainViewModel : ObservableObject
             StatusText = "貼り付けるファイルがありません";
             return;
         }
-        var affected = FileOps.Transfer(files, targetDir, copy: !cut, out var error);
+        var affected = FileOps.Transfer(files, targetDir, copy: !cut, out var error, out var performed);
+        PushTransferUndo(performed, copy: !cut);
         if (cut)
         {
             ClipboardOps.ClearAfterMove();
             ClipboardMarks.Clear();
         }
         StatusText = error ?? (cut ? $"移動しました → {targetDir}" : $"貼り付けました → {targetDir}");
+        await RefreshColumnsAsync(affected);
+    }
+
+    private static void PushTransferUndo(List<(string Source, string Dest)> performed, bool copy)
+    {
+        if (performed.Count == 0)
+            return;
+        UndoStack.Push(copy
+            ? new CopyOp(performed.Select(p => p.Dest).ToList())
+            : new MoveOp(performed));
+    }
+
+    /// <summary>直前のファイル操作 (名前変更 / 移動 / コピー / 新規フォルダー / 削除) を取り消す。</summary>
+    public async Task UndoAsync()
+    {
+        if (UndoStack.Pop() is not { } op)
+        {
+            StatusText = "元に戻す操作はありません";
+            return;
+        }
+        var affected = op.Undo(out var error);
+        StatusText = error ?? $"元に戻しました: {op.Description}";
         await RefreshColumnsAsync(affected);
     }
 
@@ -788,6 +812,8 @@ public class MainViewModel : ObservableObject
         if (paths.Count == 0)
             return;
         var affected = FileOps.Delete(paths, permanent, ownerHwnd, out var error);
+        if (!permanent && error is null)
+            UndoStack.Push(new DeleteOp(paths)); // ごみ箱行きだけ復元できる
         StatusText = error ?? (permanent ? $"削除しました: {paths.Count} 個" : $"ごみ箱へ移動しました: {paths.Count} 個");
         await RefreshColumnsAsync(affected);
     }
@@ -818,8 +844,16 @@ public class MainViewModel : ObservableObject
                 return;
             }
             Directory.CreateDirectory(path);
+            UndoStack.Push(new NewFolderOp(path));
             StatusText = $"フォルダーを作成しました: {name}";
             await RefreshColumnsAsync(new[] { parent });
+
+            // 作ったフォルダーを選択する (通常のクリックと同じ扱いで次の列が開く)
+            var column = ActiveTab?.Columns.FirstOrDefault(
+                c => string.Equals(c.Path, parent, StringComparison.OrdinalIgnoreCase));
+            if (column?.Items.FirstOrDefault(
+                    i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase)) is { } created)
+                column.SelectedItem = created;
         }
         catch (Exception ex)
         {
@@ -831,7 +865,8 @@ public class MainViewModel : ObservableObject
 
     public async Task HandleDropAsync(string[] sources, string targetDir, bool copy)
     {
-        var affected = FileOps.Transfer(sources, targetDir, copy, out var error);
+        var affected = FileOps.Transfer(sources, targetDir, copy, out var error, out var performed);
+        PushTransferUndo(performed, copy);
         if (error is not null)
             StatusText = error;
         else
