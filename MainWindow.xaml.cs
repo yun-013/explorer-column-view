@@ -29,6 +29,51 @@ public partial class MainWindow : Window
             _ = _vm.NewTabAsync(null);
     }
 
+    // ---- コピー / 切り取りの視覚マーク & クリップボード監視 ----
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool AddClipboardFormatListener(nint hwnd);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool RemoveClipboardFormatListener(nint hwnd);
+
+    private const int WM_CLIPBOARDUPDATE = 0x031D;
+
+    /// <summary>全ウィンドウの表示にコピー / 切り取りマークを反映する。</summary>
+    private static void RefreshClipboardMarksAllWindows()
+    {
+        foreach (var w in Application.Current.Windows.OfType<MainWindow>())
+            w._vm.ApplyClipboardMarks();
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+        var hwnd = new WindowInteropHelper(this).Handle;
+        AddClipboardFormatListener(hwnd);
+        HwndSource.FromHwnd(hwnd)?.AddHook(ClipboardWndProc);
+    }
+
+    private nint ClipboardWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == WM_CLIPBOARDUPDATE && !ClipboardMarks.IsEmpty)
+        {
+            // 自アプリの書き込み直後にも飛んでくるので、中身がマークと一致していれば維持し、
+            // 他アプリに書き換えられていたらマークを解除する
+            Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, () =>
+            {
+                if (ClipboardMarks.IsEmpty)
+                    return;
+                var files = ClipboardOps.GetFiles(out var cut);
+                if (ClipboardMarks.Matches(files, cut))
+                    return;
+                ClipboardMarks.Clear();
+                RefreshClipboardMarksAllWindows();
+            });
+        }
+        return 0;
+    }
+
     // ---- ウィンドウ操作 (カスタムタイトルバー) ----
 
     private void Minimize_Click(object sender, RoutedEventArgs e)
@@ -362,6 +407,8 @@ public partial class MainWindow : Window
     /// <summary>ドラッグ中に閉じられても、死んだウィンドウを掴み続けないよう追従/監視を後始末する。</summary>
     protected override void OnClosed(EventArgs e)
     {
+        if (new WindowInteropHelper(this).Handle is var hwnd && hwnd != 0)
+            RemoveClipboardFormatListener(hwnd);
         CompositionTarget.Rendering -= DragTick;
         if (_dragWatchdog is not null)
         {
@@ -689,11 +736,22 @@ public partial class MainWindow : Window
         {
             case Key.C when ctrl:
                 _vm.CopyToClipboard(SelectedFilePaths(listBox), cut: false);
+                RefreshClipboardMarksAllWindows();
                 e.Handled = true;
                 break;
 
             case Key.X when ctrl:
                 _vm.CopyToClipboard(SelectedFilePaths(listBox), cut: true);
+                RefreshClipboardMarksAllWindows();
+                e.Handled = true;
+                break;
+
+            case Key.Escape when !ClipboardMarks.IsEmpty:
+                // コピー / 切り取りを取り消す (エクスプローラーの Esc と同じ)
+                ClipboardOps.ClearAfterMove();
+                ClipboardMarks.Clear();
+                RefreshClipboardMarksAllWindows();
+                _vm.StatusText = "コピー / 切り取りを取り消しました";
                 e.Handled = true;
                 break;
 
@@ -1240,6 +1298,7 @@ public partial class MainWindow : Window
                 {
                     e.Handled = true;
                     await _vm.PasteAsync(dir);
+                    RefreshClipboardMarksAllWindows();
                 }
                 break;
         }

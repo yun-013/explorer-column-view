@@ -47,6 +47,16 @@ public static class Glyphs
     public static readonly string Check = char.ConvertFromUtf32(0xE73E);
     public static readonly string Pin = char.ConvertFromUtf32(0xE840);
     public static readonly string Star = char.ConvertFromUtf32(0xE735);
+    public static readonly string Cut = char.ConvertFromUtf32(0xE8C6);
+    public static readonly string Copy = char.ConvertFromUtf32(0xE8C8);
+}
+
+/// <summary>クリップボードに載っている項目の視覚状態。</summary>
+public enum ClipboardMarkKind
+{
+    None,
+    Copied, // コピー済み (バッジ表示)
+    Cut,    // 切り取り済み (半透明 + バッジ)
 }
 
 public record Crumb(string Display, string Path, bool IsFirst);
@@ -118,28 +128,61 @@ public class FileSystemItem : ObservableObject
     public bool WantsRealIcon => !UseRealIcon && !IsDirectory && Cloud != CloudStatus.CloudOnly
         && PerFileIconExtensions.Contains(System.IO.Path.GetExtension(Name));
 
-    public string Badge => IsFavoriteEntry ? Glyphs.Star : Cloud switch
+    /// <summary>コピー / 切り取りの視覚状態。クリップボードが変わったら戻す。
+    /// マーク中はクラウドバッジより優先して表示する (一時的な状態なので)。</summary>
+    private ClipboardMarkKind _clipMark;
+    public ClipboardMarkKind ClipMark
     {
-        CloudStatus.CloudOnly => Glyphs.Cloud,
-        CloudStatus.Local => Glyphs.Check,
-        CloudStatus.Pinned => Glyphs.Pin,
-        _ => "",
+        get => _clipMark;
+        set
+        {
+            if (_clipMark == value)
+                return;
+            _clipMark = value;
+            Raise();
+            Raise(nameof(Badge));
+            Raise(nameof(BadgeBrush));
+            Raise(nameof(BadgeTooltip));
+        }
+    }
+
+    public string Badge => ClipMark switch
+    {
+        ClipboardMarkKind.Cut => Glyphs.Cut,
+        ClipboardMarkKind.Copied => Glyphs.Copy,
+        _ => IsFavoriteEntry ? Glyphs.Star : Cloud switch
+        {
+            CloudStatus.CloudOnly => Glyphs.Cloud,
+            CloudStatus.Local => Glyphs.Check,
+            CloudStatus.Pinned => Glyphs.Pin,
+            _ => "",
+        },
     };
 
-    public Brush BadgeBrush => IsFavoriteEntry ? Brushes.Goldenrod : Cloud switch
+    public Brush BadgeBrush => ClipMark switch
     {
-        CloudStatus.CloudOnly => Brushes.SteelBlue,
-        CloudStatus.Local => Brushes.SeaGreen,
-        CloudStatus.Pinned => Brushes.SeaGreen,
-        _ => Brushes.Transparent,
+        ClipboardMarkKind.Cut => Brushes.Gray,
+        ClipboardMarkKind.Copied => Brushes.SteelBlue,
+        _ => IsFavoriteEntry ? Brushes.Goldenrod : Cloud switch
+        {
+            CloudStatus.CloudOnly => Brushes.SteelBlue,
+            CloudStatus.Local => Brushes.SeaGreen,
+            CloudStatus.Pinned => Brushes.SeaGreen,
+            _ => Brushes.Transparent,
+        },
     };
 
-    public string BadgeTooltip => IsFavoriteEntry ? "お気に入り" : Cloud switch
+    public string BadgeTooltip => ClipMark switch
     {
-        CloudStatus.CloudOnly => "オンラインのみ (開くとダウンロード)",
-        CloudStatus.Local => "このデバイスで使用可能",
-        CloudStatus.Pinned => "常にこのデバイスに保持",
-        _ => "",
+        ClipboardMarkKind.Cut => "切り取り済み (貼り付けで移動)",
+        ClipboardMarkKind.Copied => "コピー済み",
+        _ => IsFavoriteEntry ? "お気に入り" : Cloud switch
+        {
+            CloudStatus.CloudOnly => "オンラインのみ (開くとダウンロード)",
+            CloudStatus.Local => "このデバイスで使用可能",
+            CloudStatus.Pinned => "常にこのデバイスに保持",
+            _ => "",
+        },
     };
 
     public Visibility ChevronVisibility => IsDirectory ? Visibility.Visible : Visibility.Collapsed;
@@ -341,6 +384,12 @@ public class ColumnModel : ObservableObject, IDisposable
                 items = new();
             }
         }
+
+        // 再読み込みで作り直された項目にコピー / 切り取りマークを引き継ぐ
+        if (!ClipboardMarks.IsEmpty)
+            foreach (var item in items)
+                if (item is { UseRealIcon: false, IsGroupEntry: false })
+                    item.ClipMark = ClipboardMarks.MarkFor(item.Path);
 
         Items.ReplaceAll(items);
 

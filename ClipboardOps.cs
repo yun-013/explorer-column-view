@@ -76,3 +76,37 @@ public static class ClipboardOps
         }
     }
 }
+
+/// <summary>
+/// 「いまクリップボードに載せた項目」の視覚マーク (切り取り = 半透明 / コピー = バッジ)。
+/// クリップボードが外部で書き換わったら解除する (WM_CLIPBOARDUPDATE で照合)。
+/// </summary>
+public static class ClipboardMarks
+{
+    private static readonly HashSet<string> _paths = new(StringComparer.OrdinalIgnoreCase);
+
+    public static bool IsCut { get; private set; }
+    public static bool IsEmpty => _paths.Count == 0;
+
+    public static void Set(IEnumerable<string> paths, bool cut)
+    {
+        _paths.Clear();
+        foreach (var p in paths)
+            _paths.Add(p);
+        IsCut = cut;
+    }
+
+    public static void Clear() => _paths.Clear();
+
+    public static ClipboardMarkKind MarkFor(string path)
+        => _paths.Count > 0 && _paths.Contains(path)
+            ? (IsCut ? ClipboardMarkKind.Cut : ClipboardMarkKind.Copied)
+            : ClipboardMarkKind.None;
+
+    /// <summary>クリップボードの中身がこのマークと一致しているか (自アプリの書き込み判定)。</summary>
+    public static bool Matches(string[]? files, bool cut)
+        => files is not null
+            && cut == IsCut
+            && files.Length == _paths.Count
+            && files.All(_paths.Contains);
+}

@@ -173,6 +173,16 @@
                         </Grid>
                     </ToolTip>
                 </Grid.ToolTip>
+                <Grid.Style>
+                    <Style TargetType="Grid">
+                        <Style.Triggers>
+                            <!-- 切り取り済みは半透明 (エクスプローラーと同じ) -->
+                            <DataTrigger Binding="{Binding ClipMark}" Value="Cut">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Grid.Style>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="22"/>
                     <ColumnDefinition Width="*"/>

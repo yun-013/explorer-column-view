@@ -744,9 +744,13 @@ public class MainViewModel : ObservableObject
     {
         if (paths.Count == 0)
             return;
-        StatusText = ClipboardOps.SetFiles(paths, cut)
-            ? (cut ? $"切り取り: {paths.Count} 個" : $"コピー: {paths.Count} 個")
-            : "クリップボードを使用できませんでした";
+        if (!ClipboardOps.SetFiles(paths, cut))
+        {
+            StatusText = "クリップボードを使用できませんでした";
+            return;
+        }
+        ClipboardMarks.Set(paths, cut);
+        StatusText = cut ? $"切り取り: {paths.Count} 個" : $"コピー: {paths.Count} 個";
     }
 
     /// <summary>クリップボードのファイルを targetDir へ貼り付ける (切り取りなら移動)。</summary>
@@ -760,9 +764,22 @@ public class MainViewModel : ObservableObject
         }
         var affected = FileOps.Transfer(files, targetDir, copy: !cut, out var error);
         if (cut)
+        {
             ClipboardOps.ClearAfterMove();
+            ClipboardMarks.Clear();
+        }
         StatusText = error ?? (cut ? $"移動しました → {targetDir}" : $"貼り付けました → {targetDir}");
         await RefreshColumnsAsync(affected);
+    }
+
+    /// <summary>ClipboardMarks の現在の状態を、このウィンドウの全項目の表示に反映する。</summary>
+    public void ApplyClipboardMarks()
+    {
+        foreach (var tab in Tabs)
+            foreach (var column in tab.Columns)
+                foreach (var item in column.Items)
+                    if (item is { UseRealIcon: false, IsGroupEntry: false })
+                        item.ClipMark = ClipboardMarks.MarkFor(item.Path);
     }
 
     /// <summary>選択ファイル群を削除する (permanent=false はごみ箱へ)。</summary>

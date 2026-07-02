@@ -45,6 +45,10 @@ public static class FileOps
 
                 var dest = Path.Combine(targetDir, name);
 
+                // 同じフォルダーへのコピーは「◯◯ - コピー」を作る (エクスプローラーと同じ)
+                if (copy && string.Equals(Path.GetFullPath(dest), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
+                    dest = UniqueCopyName(targetDir, name, isDir);
+
                 if (copy)
                 {
                     if (isDir) FileSystem.CopyDirectory(src, dest, UIOption.AllDialogs);
@@ -69,6 +73,18 @@ public static class FileOps
         }
 
         return affected;
+    }
+
+    /// <summary>「名前 - コピー.ext」「名前 - コピー (2).ext」… の空き名を返す。</summary>
+    private static string UniqueCopyName(string dir, string name, bool isDir)
+    {
+        var stem = isDir ? name : Path.GetFileNameWithoutExtension(name);
+        var ext = isDir ? "" : Path.GetExtension(name);
+        var candidate = Path.Combine(dir, $"{stem} - コピー{ext}");
+        var n = 2;
+        while (Directory.Exists(candidate) || File.Exists(candidate))
+            candidate = Path.Combine(dir, $"{stem} - コピー ({n++}){ext}");
+        return candidate;
     }
 
     // ---- 削除 (SHFileOperation: 複数項目を 1 回のシェル操作で処理) ----
