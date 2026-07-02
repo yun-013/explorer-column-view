@@ -432,6 +432,7 @@
                                              SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                                              BorderThickness="0"
                                              SelectionMode="Extended"
+                                             TextSearch.TextPath="Name"
                                              HorizontalContentAlignment="Stretch"
                                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                                              VirtualizingPanel.IsVirtualizing="True"

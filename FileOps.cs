@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using Microsoft.VisualBasic.FileIO;
 
 namespace ColumnView;
@@ -67,6 +68,60 @@ public static class FileOps
             }
         }
 
+        return affected;
+    }
+
+    // ---- 削除 (SHFileOperation: 複数項目を 1 回のシェル操作で処理) ----
+
+    private const int FO_DELETE = 3;
+    private const ushort FOF_ALLOWUNDO = 0x40;       // ごみ箱へ
+    private const ushort FOF_NOCONFIRMATION = 0x10;  // 確認なし (ごみ箱行きは取り消せるため)
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SHFILEOPSTRUCTW
+    {
+        public nint hwnd;
+        public uint wFunc;
+        [MarshalAs(UnmanagedType.LPWStr)] public string pFrom;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? pTo;
+        public ushort fFlags;
+        [MarshalAs(UnmanagedType.Bool)] public bool fAnyOperationsAborted;
+        public nint hNameMappings;
+        [MarshalAs(UnmanagedType.LPWStr)] public string? lpszProgressTitle;
+    }
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    private static extern int SHFileOperationW(ref SHFILEOPSTRUCTW lpFileOp);
+
+    /// <summary>
+    /// ファイル / フォルダーを削除する。permanent=false はごみ箱へ。
+    /// 確認・進捗ダイアログはエクスプローラーと同じシェル標準 UI。
+    /// 戻り値は再読み込みすべき親フォルダー。
+    /// </summary>
+    public static IReadOnlyCollection<string> Delete(
+        IReadOnlyList<string> paths, bool permanent, nint ownerHwnd, out string? error)
+    {
+        error = null;
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (paths.Count == 0)
+            return affected;
+
+        foreach (var p in paths)
+            if (Path.GetDirectoryName(p.TrimEnd(Path.DirectorySeparatorChar)) is { } parent)
+                affected.Add(parent);
+
+        var op = new SHFILEOPSTRUCTW
+        {
+            hwnd = ownerHwnd,
+            wFunc = FO_DELETE,
+            // 複数パスは NUL 区切り + 二重 NUL 終端
+            pFrom = string.Join('\0', paths) + "\0\0",
+            // ごみ箱行きは確認なし (エクスプローラー既定と同じ)、完全削除はシェルの確認を出す
+            fFlags = permanent ? (ushort)0 : (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION),
+        };
+        var result = SHFileOperationW(ref op);
+        if (result != 0 && !op.fAnyOperationsAborted)
+            error = $"削除できませんでした (コード {result})";
         return affected;
     }
 

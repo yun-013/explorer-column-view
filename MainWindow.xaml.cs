@@ -670,14 +670,50 @@ public partial class MainWindow : Window
             await _vm.OnItemSelectedAsync(column, item);
     }
 
-    private void Column_PreviewKeyDown(object sender, KeyEventArgs e)
+    /// <summary>選択中の項目のうち実ファイル / フォルダーだけのパス
+    /// (ホームのお気に入り・ドライブ・グループ行はファイル操作の対象外)。</summary>
+    private static List<string> SelectedFilePaths(ListBox listBox)
+        => listBox.SelectedItems.OfType<FileSystemItem>()
+            .Where(i => i is { UseRealIcon: false, IsGroupEntry: false, IsGroupMember: false })
+            .Select(i => i.Path)
+            .ToList();
+
+    private async void Column_PreviewKeyDown(object sender, KeyEventArgs e)
     {
         if (sender is not ListBox listBox)
             return;
         var selected = listBox.SelectedItem as FileSystemItem;
+        var ctrl = Keyboard.Modifiers == ModifierKeys.Control;
 
         switch (e.Key)
         {
+            case Key.C when ctrl:
+                _vm.CopyToClipboard(SelectedFilePaths(listBox), cut: false);
+                e.Handled = true;
+                break;
+
+            case Key.X when ctrl:
+                _vm.CopyToClipboard(SelectedFilePaths(listBox), cut: true);
+                e.Handled = true;
+                break;
+
+            case Key.F2 when selected is { UseRealIcon: false, IsGroupEntry: false }:
+                e.Handled = true;
+                if (PromptText("名前の変更", "新しい名前:", selected.Name, selectStem: !selected.IsDirectory) is { } newName)
+                    await _vm.RenameAsync(selected, newName);
+                break;
+
+            case Key.Delete:
+            {
+                var paths = SelectedFilePaths(listBox);
+                if (paths.Count == 0)
+                    break;
+                e.Handled = true;
+                var permanent = (Keyboard.Modifiers & ModifierKeys.Shift) != 0;
+                await _vm.DeleteAsync(paths, permanent, new WindowInteropHelper(this).Handle);
+                break;
+            }
+
             case Key.Space:
                 _vm.TogglePreview(selected);
                 e.Handled = true;
@@ -1165,6 +1201,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        {
+            if (e.Key == Key.N)
+            {
+                e.Handled = true;
+                await NewFolderFlow();
+            }
+            return;
+        }
+
         if (Keyboard.Modifiers != ModifierKeys.Control)
             return;
 
@@ -1187,7 +1233,33 @@ public partial class MainWindow : Window
                 BeginAddressEdit();
                 e.Handled = true;
                 break;
+            case Key.V:
+                // 現在のフォルダーへ貼り付け。パス入力欄などのテキスト編集中は
+                // ネイティブの貼り付けを妨げない
+                if (Keyboard.FocusedElement is not TextBox && _vm.FavoriteTarget is { } dir)
+                {
+                    e.Handled = true;
+                    await _vm.PasteAsync(dir);
+                }
+                break;
         }
+    }
+
+    /// <summary>Ctrl+Shift+N: 現在のフォルダーに新しいフォルダーを作る。</summary>
+    private async Task NewFolderFlow()
+    {
+        if (_vm.SuggestNewFolderName() is not { } suggested)
+            return;
+        if (PromptText("新しいフォルダー", "フォルダー名:", suggested) is { } name)
+            await _vm.CreateFolderAsync(name);
+    }
+
+    /// <summary>最後のウィンドウを閉じるとき、タブ構成を保存する (次回起動時に復元)。</summary>
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        if (Application.Current.Windows.OfType<MainWindow>().Count() == 1)
+            _vm.SaveSession();
+        base.OnClosing(e);
     }
 
     // ---- 補助 ----

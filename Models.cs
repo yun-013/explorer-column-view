@@ -286,7 +286,7 @@ public abstract class ObservableObject : INotifyPropertyChanged
     }
 }
 
-public class ColumnModel : ObservableObject
+public class ColumnModel : ObservableObject, IDisposable
 {
     /// <summary>フォルダー列のパス。ホーム列・グループ列では null。</summary>
     public string? Path { get; }
@@ -347,9 +347,101 @@ public class ColumnModel : ObservableObject
         _iconCts?.Cancel();
         _iconCts = new CancellationTokenSource();
         _ = LoadIconsAsync(_iconCts.Token);
+
+        StartWatching();
     }
 
     private CancellationTokenSource? _iconCts;
+
+    // ---- 外部変更の自動反映 (FileSystemWatcher) ----
+
+    /// <summary>外部変更による再読み込み中。選択復帰でドリルイン (子の列を開く) が誤発火しないよう
+    /// ハンドラー側でこのフラグを見て抑止する。</summary>
+    public bool IsRefreshing { get; private set; }
+
+    private FileSystemWatcher? _watcher;
+    private System.Windows.Threading.DispatcherTimer? _fsTimer;
+    private int _fsDirty; // 0=静穏 / 1=再読込予約済み (イベントの殺到を 1 回に束ねる)
+
+    /// <summary>フォルダー列の監視を開始する。名前・属性 (クラウド状態) のみ監視し、
+    /// 書き込み中のサイズ変化などの高頻度イベントは拾わない (軽量化)。</summary>
+    private void StartWatching()
+    {
+        if (_watcher is not null || Path is null)
+            return;
+        try
+        {
+            _fsTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(500),
+            };
+            _fsTimer.Tick += async (_, _) =>
+            {
+                _fsTimer!.Stop();
+                Interlocked.Exchange(ref _fsDirty, 0);
+                await RefreshFromWatcherAsync();
+            };
+
+            _watcher = new FileSystemWatcher(Path)
+            {
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.Attributes,
+                IncludeSubdirectories = false,
+            };
+            _watcher.Created += OnFsEvent;
+            _watcher.Deleted += OnFsEvent;
+            _watcher.Renamed += OnFsEvent;
+            _watcher.Changed += OnFsEvent;
+            _watcher.Error += (_, _) => OnFsEvent(this, null); // バッファ溢れ等 → 取りこぼし前提で再読込
+            _watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception)
+        {
+            // ネットワークパスや権限で監視できないフォルダーは自動更新なしで続行
+            _watcher?.Dispose();
+            _watcher = null;
+        }
+    }
+
+    /// <summary>watcher スレッドから呼ばれる。最初の 1 件だけ UI スレッドへタイマー起動を投げ、
+    /// 以降 500ms 分のイベントはフラグで吸収する (殺到しても再読込は最大 2 回/秒)。</summary>
+    private void OnFsEvent(object sender, FileSystemEventArgs? e)
+    {
+        if (Interlocked.Exchange(ref _fsDirty, 1) == 1)
+            return;
+        System.Windows.Application.Current?.Dispatcher.BeginInvoke(() => _fsTimer?.Start());
+    }
+
+    /// <summary>この列だけを再読み込みし、選択を保持する。</summary>
+    private async Task RefreshFromWatcherAsync()
+    {
+        if (Path is null || _watcher is null)
+            return;
+        IsRefreshing = true;
+        try
+        {
+            var settings = AppSettings.Current;
+            var selectedPath = SelectedItem?.Path;
+            await LoadAsync(settings.ShowHidden,
+                FileSystemItem.BuildComparison(settings.SortKey, settings.SortDescending));
+            if (selectedPath is not null)
+                SelectedItem = Items.FirstOrDefault(
+                    i => string.Equals(i.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            IsRefreshing = false;
+        }
+    }
+
+    /// <summary>列が閉じられたら監視とアイコン読み込みを確実に止める。</summary>
+    public void Dispose()
+    {
+        _watcher?.Dispose();
+        _watcher = null;
+        _fsTimer?.Stop();
+        _fsTimer = null;
+        _iconCts?.Cancel();
+    }
 
     /// <summary>表示中ファイルの実アイコンをバックグラウンドで読み込み、順次差し替える。</summary>
     private async Task LoadIconsAsync(CancellationToken ct)

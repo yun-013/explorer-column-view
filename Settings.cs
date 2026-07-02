@@ -28,6 +28,17 @@ public class AppSettings
     /// キー: お気に入り=パス、グループ="group:"+Id。未登録のものは末尾。</summary>
     public List<string> HomeOrder { get; set; } = new();
 
+    // ---- セッション復元 ----
+
+    /// <summary>起動時に前回のタブ構成を復元するか。</summary>
+    public bool RestoreSession { get; set; } = true;
+
+    /// <summary>最後に閉じたウィンドウの各タブのフォルダー (null = ホーム)。</summary>
+    public List<string?> SessionTabs { get; set; } = new();
+
+    /// <summary>前回アクティブだったタブの位置。</summary>
+    public int SessionActiveTab { get; set; }
+
     private static readonly string FilePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ColumnView", "settings.json");
 

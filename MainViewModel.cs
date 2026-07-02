@@ -511,7 +511,40 @@ public class MainViewModel : ObservableObject
     public MainViewModel(bool createInitialTab)
     {
         if (createInitialTab)
-            _ = NewTabAsync(null);
+            _ = InitTabsAsync();
+    }
+
+    /// <summary>起動時: 前回のセッションがあれば復元し、なければホームタブを開く。</summary>
+    private async Task InitTabsAsync()
+    {
+        if (_settings.RestoreSession && _settings.SessionTabs.Count > 0)
+        {
+            foreach (var path in _settings.SessionTabs)
+            {
+                if (path is null)
+                    await NewTabAsync(null);
+                else if (Directory.Exists(path))
+                    await NewTabAsync(path);
+            }
+            if (Tabs.Count > 0)
+            {
+                var active = _settings.SessionActiveTab;
+                if (active >= 0 && active < Tabs.Count)
+                    ActiveTab = Tabs[active];
+                return;
+            }
+        }
+        await NewTabAsync(null);
+    }
+
+    /// <summary>現在のタブ構成 (各タブの最深フォルダー) を設定へ保存する。最後のウィンドウを閉じるときに呼ぶ。</summary>
+    public void SaveSession()
+    {
+        _settings.SessionTabs = Tabs
+            .Select(t => t.Columns.LastOrDefault(c => c.Path is not null)?.Path)
+            .ToList();
+        _settings.SessionActiveTab = ActiveTab is null ? 0 : Tabs.IndexOf(ActiveTab);
+        _settings.Save();
     }
 
     public async Task NewTabAsync(string? path)
@@ -523,6 +556,17 @@ public class MainViewModel : ObservableObject
         PushHistory(tab, path);
     }
 
+    /// <summary>タブの列を末尾から keep 個になるまで取り除く (監視も止める)。</summary>
+    private static void TrimColumns(TabModel tab, int keep)
+    {
+        while (tab.Columns.Count > keep)
+        {
+            var last = tab.Columns[^1];
+            tab.Columns.RemoveAt(tab.Columns.Count - 1);
+            last.Dispose();
+        }
+    }
+
     public void CloseTab(TabModel tab)
     {
         var index = Tabs.IndexOf(tab);
@@ -530,6 +574,7 @@ public class MainViewModel : ObservableObject
             return;
         var wasActive = ActiveTab == tab;
         Tabs.Remove(tab);
+        TrimColumns(tab, 0);
         if (Tabs.Count == 0)
         {
             TabsEmptied?.Invoke();
@@ -545,7 +590,7 @@ public class MainViewModel : ObservableObject
         _navigating = true;
         try
         {
-            tab.Columns.Clear();
+            TrimColumns(tab, 0);
             var column = new ColumnModel(path);
             tab.Columns.Add(column);
             await column.LoadAsync(ShowHidden, CurrentComparison);
@@ -582,7 +627,8 @@ public class MainViewModel : ObservableObject
     /// <summary>列で項目が選択されたときの中核ロジック</summary>
     public async Task OnItemSelectedAsync(ColumnModel column, FileSystemItem item)
     {
-        if (_navigating || ActiveTab is null)
+        // IsRefreshing: 外部変更の再読み込みによる選択復帰はナビゲーションとして扱わない
+        if (_navigating || column.IsRefreshing || ActiveTab is null)
             return;
 
         var tab = ActiveTab;
@@ -591,8 +637,7 @@ public class MainViewModel : ObservableObject
             return;
 
         // 選択列より右の列を畳む
-        while (tab.Columns.Count > index + 1)
-            tab.Columns.RemoveAt(tab.Columns.Count - 1);
+        TrimColumns(tab, index + 1);
 
         // グループ見出し: 中身 (サブグループ＋フォルダー) を次の列に展開する。
         // CurrentPath は据え置き (直前のフォルダーを「現在のフォルダー」として追加できるように)。
@@ -635,13 +680,12 @@ public class MainViewModel : ObservableObject
     /// <summary>複数選択時: 子の列を畳んで件数を表示する。</summary>
     public void OnMultiSelect(ColumnModel column, int count)
     {
-        if (_navigating || ActiveTab is not { } tab)
+        if (_navigating || column.IsRefreshing || ActiveTab is not { } tab)
             return;
         var index = tab.Columns.IndexOf(column);
         if (index < 0)
             return;
-        while (tab.Columns.Count > index + 1)
-            tab.Columns.RemoveAt(tab.Columns.Count - 1);
+        TrimColumns(tab, index + 1);
         StatusText = $"{count} 個を選択";
     }
 
@@ -690,6 +734,79 @@ public class MainViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = "コピーできませんでした: " + ex.Message;
+        }
+    }
+
+    // ---- クリップボード (コピー / 切り取り / 貼り付け) ・削除・新規フォルダー ----
+
+    /// <summary>選択ファイル群をクリップボードへ (エクスプローラー互換)。cut=true で切り取り。</summary>
+    public void CopyToClipboard(IReadOnlyList<string> paths, bool cut)
+    {
+        if (paths.Count == 0)
+            return;
+        StatusText = ClipboardOps.SetFiles(paths, cut)
+            ? (cut ? $"切り取り: {paths.Count} 個" : $"コピー: {paths.Count} 個")
+            : "クリップボードを使用できませんでした";
+    }
+
+    /// <summary>クリップボードのファイルを targetDir へ貼り付ける (切り取りなら移動)。</summary>
+    public async Task PasteAsync(string targetDir)
+    {
+        var files = ClipboardOps.GetFiles(out var cut);
+        if (files is null)
+        {
+            StatusText = "貼り付けるファイルがありません";
+            return;
+        }
+        var affected = FileOps.Transfer(files, targetDir, copy: !cut, out var error);
+        if (cut)
+            ClipboardOps.ClearAfterMove();
+        StatusText = error ?? (cut ? $"移動しました → {targetDir}" : $"貼り付けました → {targetDir}");
+        await RefreshColumnsAsync(affected);
+    }
+
+    /// <summary>選択ファイル群を削除する (permanent=false はごみ箱へ)。</summary>
+    public async Task DeleteAsync(IReadOnlyList<string> paths, bool permanent, nint ownerHwnd)
+    {
+        if (paths.Count == 0)
+            return;
+        var affected = FileOps.Delete(paths, permanent, ownerHwnd, out var error);
+        StatusText = error ?? (permanent ? $"削除しました: {paths.Count} 個" : $"ごみ箱へ移動しました: {paths.Count} 個");
+        await RefreshColumnsAsync(affected);
+    }
+
+    /// <summary>現在のフォルダーに新しいフォルダーを作る。既定名の重複は連番を付ける。</summary>
+    public string? SuggestNewFolderName()
+    {
+        if (FavoriteTarget is not { } parent)
+            return null;
+        var name = "新しいフォルダー";
+        var n = 2;
+        while (Directory.Exists(Path.Combine(parent, name)) || File.Exists(Path.Combine(parent, name)))
+            name = $"新しいフォルダー ({n++})";
+        return name;
+    }
+
+    public async Task CreateFolderAsync(string name)
+    {
+        name = name.Trim();
+        if (FavoriteTarget is not { } parent || string.IsNullOrEmpty(name))
+            return;
+        try
+        {
+            var path = Path.Combine(parent, name);
+            if (Directory.Exists(path) || File.Exists(path))
+            {
+                StatusText = $"『{name}』は既に存在します";
+                return;
+            }
+            Directory.CreateDirectory(path);
+            StatusText = $"フォルダーを作成しました: {name}";
+            await RefreshColumnsAsync(new[] { parent });
+        }
+        catch (Exception ex)
+        {
+            StatusText = "フォルダーを作成できませんでした: " + ex.Message;
         }
     }
 
