@@ -3,25 +3,45 @@ using Microsoft.VisualBasic.FileIO;
 
 namespace ColumnView;
 
-/// <summary>直前のファイル操作を取り消すためのグローバル履歴 (全ウィンドウ共有・最大 20 件)。</summary>
+/// <summary>
+/// ファイル操作の取り消し / やり直し履歴 (全ウィンドウ共有・各最大 20 件)。
+/// 各操作は自身の「逆操作」を作れる (Inverse)。Undo すると逆操作が Redo 側へ積まれ、
+/// Redo するとさらにその逆が Undo 側へ戻る。新しい操作をしたら Redo 履歴は無効になる。
+/// </summary>
 public static class UndoStack
 {
     private const int Capacity = 20;
-    private static readonly List<IUndoOp> _ops = new();
+    private static readonly List<IUndoOp> _undo = new();
+    private static readonly List<IUndoOp> _redo = new();
 
+    /// <summary>新しいファイル操作を記録する (やり直し履歴はクリア)。</summary>
     public static void Push(IUndoOp op)
     {
-        _ops.Add(op);
-        if (_ops.Count > Capacity)
-            _ops.RemoveAt(0);
+        Add(_undo, op);
+        _redo.Clear();
     }
 
-    public static IUndoOp? Pop()
+    /// <summary>Redo 実行後、逆操作を Undo 側へ戻す (Redo 履歴は保持)。</summary>
+    public static void PushUndoKeepRedo(IUndoOp op) => Add(_undo, op);
+
+    public static void PushRedo(IUndoOp op) => Add(_redo, op);
+
+    public static IUndoOp? PopUndo() => Pop(_undo);
+    public static IUndoOp? PopRedo() => Pop(_redo);
+
+    private static void Add(List<IUndoOp> list, IUndoOp op)
     {
-        if (_ops.Count == 0)
+        list.Add(op);
+        if (list.Count > Capacity)
+            list.RemoveAt(0);
+    }
+
+    private static IUndoOp? Pop(List<IUndoOp> list)
+    {
+        if (list.Count == 0)
             return null;
-        var op = _ops[^1];
-        _ops.RemoveAt(_ops.Count - 1);
+        var op = list[^1];
+        list.RemoveAt(list.Count - 1);
         return op;
     }
 }
@@ -32,12 +52,17 @@ public interface IUndoOp
 
     /// <summary>取り消しを実行し、再読込すべきフォルダーを返す。</summary>
     IReadOnlyCollection<string> Undo(out string? error);
+
+    /// <summary>この操作の逆 (Undo した状態から元へ戻す操作)。</summary>
+    IUndoOp Inverse();
 }
 
 /// <summary>名前の変更 → 元の名前へ戻す。</summary>
 public sealed class RenameOp(string oldPath, string newPath) : IUndoOp
 {
     public string Description => "名前の変更";
+
+    public IUndoOp Inverse() => new RenameOp(newPath, oldPath);
 
     public IReadOnlyCollection<string> Undo(out string? error)
     {
@@ -62,10 +87,13 @@ public sealed class RenameOp(string oldPath, string newPath) : IUndoOp
     }
 }
 
-/// <summary>移動 (切り取り貼り付け / D&D) → 元の場所へ戻す。</summary>
-public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs) : IUndoOp
+/// <summary>移動 (切り取り貼り付け / D&D / アプリごみ箱への退避) → 元の場所へ戻す。</summary>
+public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, string description = "移動") : IUndoOp
 {
-    public string Description => "移動";
+    public string Description => description;
+
+    public IUndoOp Inverse()
+        => new MoveOp(pairs.Select(p => (p.Dest, p.Source)).ToList(), description);
 
     public IReadOnlyCollection<string> Undo(out string? error)
     {
@@ -99,57 +127,104 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs) : 
     }
 }
 
-/// <summary>コピー → 作られた複製をごみ箱へ。</summary>
-public sealed class CopyOp(IReadOnlyList<string> createdPaths) : IUndoOp
+/// <summary>「これらのパスをごみ箱へ入れる」操作。コピー / 新規フォルダーの取り消し、削除のやり直しに使う。
+/// ごみ箱の無い場所 (NAS 等) はアプリの退避ごみ箱へ移動し、完全削除にはしない。
+/// 逆操作は実行時にどこへ入れたか (ごみ箱 / 退避先) を記録して組み立てる。</summary>
+public sealed class RecycleOp(IReadOnlyList<string> paths, string description) : IUndoOp
 {
-    public string Description => "コピー";
+    private List<string> _recycled = new();
+    private List<(string Source, string Dest)> _trashed = new();
+
+    public string Description => description;
+
+    public IUndoOp Inverse()
+    {
+        var ops = new List<IUndoOp>();
+        if (_recycled.Count > 0)
+            ops.Add(new RestoreOp(_recycled, description));
+        if (_trashed.Count > 0)
+            ops.Add(new MoveOp(_trashed, description));
+        return ops.Count == 1 ? ops[0] : new CompositeOp(ops, description);
+    }
 
     public IReadOnlyCollection<string> Undo(out string? error)
     {
-        var existing = createdPaths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
+        error = null;
+        _recycled = new();
+        _trashed = new();
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var existing = paths.Where(p => File.Exists(p) || Directory.Exists(p)).ToList();
         if (existing.Count == 0)
         {
-            error = "コピーされた項目が見つかりません";
-            return Array.Empty<string>();
+            error = "対象の項目が見つかりません";
+            return affected;
         }
-        return FileOps.Delete(existing, permanent: false, 0, out error);
-    }
-}
 
-/// <summary>新しいフォルダー → ごみ箱へ。</summary>
-public sealed class NewFolderOp(string path) : IUndoOp
-{
-    public string Description => "新しいフォルダー";
+        var recyclable = existing.Where(FileOps.SupportsRecycleBin).ToList();
+        var trashable = existing.Where(p => !FileOps.SupportsRecycleBin(p)).ToList();
 
-    public IReadOnlyCollection<string> Undo(out string? error)
-    {
-        if (!Directory.Exists(path))
+        if (recyclable.Count > 0)
         {
-            error = "フォルダーが見つかりません";
-            return Array.Empty<string>();
+            affected.UnionWith(FileOps.Delete(recyclable, permanent: false, 0, out var e));
+            error ??= e;
+            if (e is null)
+                _recycled = recyclable;
         }
-        return FileOps.Delete(new[] { path }, permanent: false, 0, out error);
+        if (trashable.Count > 0)
+        {
+            var performed = FileOps.MoveToAppTrash(trashable, out var e);
+            error ??= e;
+            _trashed = performed;
+            foreach (var (source, _) in performed)
+                if (Path.GetDirectoryName(source.TrimEnd('\\')) is { } dir)
+                    affected.Add(dir);
+        }
+        return affected;
     }
 }
 
-/// <summary>ごみ箱への削除 → シェルの「元に戻す」で復元。</summary>
-public sealed class DeleteOp(IReadOnlyList<string> originalPaths) : IUndoOp
+/// <summary>複数の操作を 1 手として扱う (ごみ箱と退避ごみ箱が混在した場合など)。</summary>
+public sealed class CompositeOp(IReadOnlyList<IUndoOp> ops, string description) : IUndoOp
 {
-    public string Description => "削除 (ごみ箱から復元)";
+    public string Description => description;
+
+    public IUndoOp Inverse()
+        => new CompositeOp(ops.Select(o => o.Inverse()).Reverse().ToList(), description);
 
     public IReadOnlyCollection<string> Undo(out string? error)
     {
         error = null;
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in originalPaths)
+        foreach (var op in ops)
+        {
+            affected.UnionWith(op.Undo(out var e));
+            error ??= e;
+        }
+        return affected;
+    }
+}
+
+/// <summary>「これらのパスをごみ箱から復元する」操作。削除の取り消し、コピー等のやり直しに使う。</summary>
+public sealed class RestoreOp(IReadOnlyList<string> paths, string description) : IUndoOp
+{
+    public string Description => description;
+
+    public IUndoOp Inverse() => new RecycleOp(paths, description);
+
+    public IReadOnlyCollection<string> Undo(out string? error)
+    {
+        error = null;
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in paths)
             if (Path.GetDirectoryName(p.TrimEnd('\\')) is { } dir)
                 affected.Add(dir);
 
-        var restored = RecycleBin.Restore(originalPaths);
-        if (restored < originalPaths.Count)
+        var restored = RecycleBin.Restore(paths);
+        if (restored < paths.Count)
             error = restored == 0
                 ? "ごみ箱から復元できませんでした"
-                : $"一部のみ復元しました ({restored}/{originalPaths.Count})";
+                : $"一部のみ復元しました ({restored}/{paths.Count})";
         return affected;
     }
 }

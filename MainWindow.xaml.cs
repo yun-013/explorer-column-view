@@ -1261,10 +1261,19 @@ public partial class MainWindow : Window
 
         if (Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         {
-            if (e.Key == Key.N)
+            switch (e.Key)
             {
-                e.Handled = true;
-                await NewFolderFlow();
+                case Key.N:
+                    e.Handled = true;
+                    await NewFolderFlow();
+                    break;
+                case Key.Z:
+                    if (Keyboard.FocusedElement is not TextBox)
+                    {
+                        e.Handled = true;
+                        await _vm.RedoAsync();
+                    }
+                    break;
             }
             return;
         }
@@ -1307,6 +1316,14 @@ public partial class MainWindow : Window
                 {
                     e.Handled = true;
                     await _vm.UndoAsync();
+                }
+                break;
+            case Key.Y:
+                // やり直し (Ctrl+Shift+Z と同じ)
+                if (Keyboard.FocusedElement is not TextBox)
+                {
+                    e.Handled = true;
+                    await _vm.RedoAsync();
                 }
                 break;
         }

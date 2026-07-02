@@ -91,6 +91,122 @@ public static class FileOps
         return candidate;
     }
 
+    // ---- アプリの退避ごみ箱 (ごみ箱が使えない NAS・ネットワークドライブ・リムーバブル用) ----
+
+    private const string AppTrashName = ".ColumnViewTrash";
+    private static readonly TimeSpan AppTrashRetention = TimeSpan.FromDays(30);
+
+    /// <summary>この場所の削除が Windows のごみ箱に入るか。
+    /// UNC・ネットワークドライブ・リムーバブルはごみ箱が無く、シェルに任せると完全削除になる。</summary>
+    public static bool SupportsRecycleBin(string path)
+    {
+        try
+        {
+            var full = Path.GetFullPath(path);
+            if (full.StartsWith(@"\\", StringComparison.Ordinal))
+                return false; // UNC (NAS 等)
+            var root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root))
+                return false;
+            return new DriveInfo(root).DriveType == DriveType.Fixed;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// ごみ箱の無いボリューム用の疑似ごみ箱。同じボリューム直下の隠しフォルダー
+    /// .ColumnViewTrash\(日時) へ「移動」する (同一ボリューム内なのでデータ転送なしで一瞬)。
+    /// 戻り値は移動できた (元, 先)。取り消しは元の場所へ移動し直すだけ。
+    /// </summary>
+    public static List<(string Source, string Dest)> MoveToAppTrash(IReadOnlyList<string> paths, out string? error)
+    {
+        error = null;
+        var performed = new List<(string Source, string Dest)>();
+
+        foreach (var group in paths.GroupBy(
+            p => Path.GetPathRoot(Path.GetFullPath(p)) ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            if (group.Key.Length == 0)
+                continue;
+            string opDir;
+            var trashRoot = Path.Combine(group.Key, AppTrashName);
+            try
+            {
+                opDir = Path.Combine(trashRoot, DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..6]);
+                Directory.CreateDirectory(opDir);
+                try
+                {
+                    File.SetAttributes(trashRoot, File.GetAttributes(trashRoot) | FileAttributes.Hidden);
+                }
+                catch { /* 属性を付けられなくても続行 */ }
+            }
+            catch (Exception)
+            {
+                // 共有のルートに書き込めない等 → この場所では退避できない (完全削除はしない)
+                error = "ごみ箱の無い場所で、退避フォルダーも作成できませんでした。完全に削除するには Shift+Del を使ってください";
+                continue;
+            }
+
+            foreach (var p in group)
+            {
+                try
+                {
+                    var trimmed = p.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                    var dest = Path.Combine(opDir, Path.GetFileName(trimmed));
+                    if (Directory.Exists(p))
+                        Directory.Move(p, dest);
+                    else if (File.Exists(p))
+                        File.Move(p, dest);
+                    else
+                        continue;
+                    performed.Add((trimmed, dest));
+                }
+                catch (Exception ex)
+                {
+                    error = "削除できませんでした: " + ex.Message;
+                }
+            }
+
+            // アプリ外から手動復旧できるよう、元のパスの控えを残す
+            try
+            {
+                var lines = performed.Select(x => $"{x.Dest}\t{x.Source}");
+                File.WriteAllLines(Path.Combine(opDir, "manifest.txt"), lines);
+            }
+            catch { /* 控えが書けなくても本体の退避は成立している */ }
+
+            // 古い退避 (30 日超) は背景で掃除する
+            var rootToPurge = trashRoot;
+            _ = Task.Run(() => PurgeOldTrash(rootToPurge));
+        }
+        return performed;
+    }
+
+    /// <summary>退避ごみ箱の古い世代を削除する (フォルダー名の日時プレフィックスで判定)。</summary>
+    private static void PurgeOldTrash(string trashRoot)
+    {
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(trashRoot))
+            {
+                var name = Path.GetFileName(dir);
+                if (name.Length < 15
+                    || !DateTime.TryParseExact(name[..15], "yyyyMMdd-HHmmss", null,
+                        System.Globalization.DateTimeStyles.None, out var stamp))
+                    continue;
+                if (DateTime.Now - stamp > AppTrashRetention)
+                {
+                    try { Directory.Delete(dir, recursive: true); }
+                    catch { /* 使用中などは次回に持ち越し */ }
+                }
+            }
+        }
+        catch { /* 掃除の失敗は無視 */ }
+    }
+
     // ---- 削除 (SHFileOperation: 複数項目を 1 回のシェル操作で処理) ----
 
     private const int FO_DELETE = 3;

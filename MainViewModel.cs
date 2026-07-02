@@ -779,20 +779,49 @@ public class MainViewModel : ObservableObject
         if (performed.Count == 0)
             return;
         UndoStack.Push(copy
-            ? new CopyOp(performed.Select(p => p.Dest).ToList())
+            ? new RecycleOp(performed.Select(p => p.Dest).ToList(), "コピー")
             : new MoveOp(performed));
     }
 
     /// <summary>直前のファイル操作 (名前変更 / 移動 / コピー / 新規フォルダー / 削除) を取り消す。</summary>
     public async Task UndoAsync()
     {
-        if (UndoStack.Pop() is not { } op)
+        if (UndoStack.PopUndo() is not { } op)
         {
             StatusText = "元に戻す操作はありません";
             return;
         }
         var affected = op.Undo(out var error);
-        StatusText = error ?? $"元に戻しました: {op.Description}";
+        if (error is null)
+        {
+            UndoStack.PushRedo(op.Inverse());
+            StatusText = $"元に戻しました: {op.Description}";
+        }
+        else
+        {
+            StatusText = error;
+        }
+        await RefreshColumnsAsync(affected);
+    }
+
+    /// <summary>取り消した操作をやり直す (Ctrl+Shift+Z / Ctrl+Y)。</summary>
+    public async Task RedoAsync()
+    {
+        if (UndoStack.PopRedo() is not { } op)
+        {
+            StatusText = "やり直す操作はありません";
+            return;
+        }
+        var affected = op.Undo(out var error);
+        if (error is null)
+        {
+            UndoStack.PushUndoKeepRedo(op.Inverse());
+            StatusText = $"やり直しました: {op.Description}";
+        }
+        else
+        {
+            StatusText = error;
+        }
         await RefreshColumnsAsync(affected);
     }
 
@@ -806,16 +835,54 @@ public class MainViewModel : ObservableObject
                         item.ClipMark = ClipboardMarks.MarkFor(item.Path);
     }
 
-    /// <summary>選択ファイル群を削除する (permanent=false はごみ箱へ)。</summary>
+    /// <summary>選択ファイル群を削除する (permanent=false はごみ箱へ)。
+    /// ごみ箱の無い場所 (NAS 等) はアプリの退避ごみ箱へ移動し、どちらも Ctrl+Z で戻せる。</summary>
     public async Task DeleteAsync(IReadOnlyList<string> paths, bool permanent, nint ownerHwnd)
     {
         if (paths.Count == 0)
             return;
-        var affected = FileOps.Delete(paths, permanent, ownerHwnd, out var error);
-        if (!permanent && error is null)
-            UndoStack.Push(new DeleteOp(paths)); // ごみ箱行きだけ復元できる
-        StatusText = error ?? (permanent ? $"削除しました: {paths.Count} 個" : $"ごみ箱へ移動しました: {paths.Count} 個");
-        await RefreshColumnsAsync(affected);
+
+        if (permanent)
+        {
+            var affected = FileOps.Delete(paths, permanent: true, ownerHwnd, out var error);
+            StatusText = error ?? $"削除しました: {paths.Count} 個";
+            await RefreshColumnsAsync(affected);
+            return;
+        }
+
+        // 通常は 1 フォルダー内の選択なのでどちらか一方だけになる
+        var recyclable = paths.Where(FileOps.SupportsRecycleBin).ToList();
+        var trashable = paths.Where(p => !FileOps.SupportsRecycleBin(p)).ToList();
+        var affectedAll = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string? err = null;
+        var done = 0;
+
+        if (recyclable.Count > 0)
+        {
+            affectedAll.UnionWith(FileOps.Delete(recyclable, permanent: false, ownerHwnd, out var e));
+            err ??= e;
+            if (e is null)
+            {
+                UndoStack.Push(new RestoreOp(recyclable, "削除"));
+                done += recyclable.Count;
+            }
+        }
+        if (trashable.Count > 0)
+        {
+            var performed = FileOps.MoveToAppTrash(trashable, out var e);
+            err ??= e;
+            foreach (var (source, _) in performed)
+                if (Path.GetDirectoryName(source) is { } dir)
+                    affectedAll.Add(dir);
+            if (performed.Count > 0)
+            {
+                UndoStack.Push(new MoveOp(performed, "削除"));
+                done += performed.Count;
+            }
+        }
+
+        StatusText = err ?? $"ごみ箱へ移動しました: {done} 個";
+        await RefreshColumnsAsync(affectedAll);
     }
 
     /// <summary>現在のフォルダーに新しいフォルダーを作る。既定名の重複は連番を付ける。</summary>
@@ -844,7 +911,7 @@ public class MainViewModel : ObservableObject
                 return;
             }
             Directory.CreateDirectory(path);
-            UndoStack.Push(new NewFolderOp(path));
+            UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダー"));
             StatusText = $"フォルダーを作成しました: {name}";
             await RefreshColumnsAsync(new[] { parent });
 
