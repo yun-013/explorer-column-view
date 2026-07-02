@@ -210,8 +210,7 @@ public static class FileOps
     // ---- 削除 (SHFileOperation: 複数項目を 1 回のシェル操作で処理) ----
 
     private const int FO_DELETE = 3;
-    private const ushort FOF_ALLOWUNDO = 0x40;       // ごみ箱へ
-    private const ushort FOF_NOCONFIRMATION = 0x10;  // 確認なし (ごみ箱行きは取り消せるため)
+    private const ushort FOF_ALLOWUNDO = 0x40; // ごみ箱へ
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct SHFILEOPSTRUCTW
@@ -252,8 +251,9 @@ public static class FileOps
             wFunc = FO_DELETE,
             // 複数パスは NUL 区切り + 二重 NUL 終端
             pFrom = string.Join('\0', paths) + "\0\0",
-            // ごみ箱行きは確認なし (エクスプローラー既定と同じ)、完全削除はシェルの確認を出す
-            fFlags = permanent ? (ushort)0 : (ushort)(FOF_ALLOWUNDO | FOF_NOCONFIRMATION),
+            // ごみ箱行きも FOF_NOCONFIRMATION は付けない: 既定設定では確認なしで入り (実機検証済)、
+            // ごみ箱に入れられないボリュームではシェルが「完全に削除しますか」と警告してくれる
+            fFlags = permanent ? (ushort)0 : FOF_ALLOWUNDO,
         };
         var result = SHFileOperationW(ref op);
         if (result != 0 && !op.fAnyOperationsAborted)
