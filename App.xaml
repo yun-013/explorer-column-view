@@ -4,54 +4,309 @@
              xmlns:local="clr-namespace:ColumnView"
              StartupUri="MainWindow.xaml">
     <Application.Resources>
-        <!-- Windows 11 エクスプローラー風のリスト行 (角丸ハイライト・ホバー) -->
+        <!-- ==== カラーパレット (Claude 風の温かみ×テラコッタアクセント) ==== -->
+        <SolidColorBrush x:Key="AccentBrush" Color="#C96442"/>
+        <SolidColorBrush x:Key="AccentSelectBrush" Color="#19C96442"/>
+        <SolidColorBrush x:Key="AccentSelectHoverBrush" Color="#24C96442"/>
+        <SolidColorBrush x:Key="AccentFocusBrush" Color="#1EC96442"/>
+        <SolidColorBrush x:Key="AccentCrumbHoverBrush" Color="#15C96442"/>
+        <SolidColorBrush x:Key="AccentDropHighlightBrush" Color="#2EC96442"/>
+        <SolidColorBrush x:Key="AccentDropBorderBrush" Color="#99C96442"/>
+
+        <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FCFAF7"/>
+        <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFE"/>
+        <SolidColorBrush x:Key="CaptionBarBrush" Color="#F1ECE2"/>
+        <SolidColorBrush x:Key="BorderSoftBrush" Color="#ECE7DD"/>
+        <SolidColorBrush x:Key="WindowOuterBorderBrush" Color="#E3DCCF"/>
+
+        <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2B2A27"/>
+        <SolidColorBrush x:Key="TextSecondaryBrush" Color="#8A8474"/>
+        <SolidColorBrush x:Key="TextTertiaryBrush" Color="#B6AFA0"/>
+
+        <!-- ホバー等の半透明オーバーレイ (ダークテーマで白系に差し替わる) -->
+        <SolidColorBrush x:Key="HoverOverlayBrush" Color="#12000000"/>
+        <SolidColorBrush x:Key="PressedOverlayBrush" Color="#1E000000"/>
+        <SolidColorBrush x:Key="RowHoverBrush" Color="#0D000000"/>
+        <SolidColorBrush x:Key="TabHoverBrush" Color="#66FFFFFF"/>
+        <SolidColorBrush x:Key="ChipHoverBrush" Color="#F6F2EB"/>
+        <SolidColorBrush x:Key="ChipPressedBrush" Color="#F1ECE2"/>
+        <SolidColorBrush x:Key="ScrollThumbBrush" Color="#30000000"/>
+        <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="#55000000"/>
+
+        <DropShadowEffect x:Key="SoftShadow" Color="#000000" Opacity="0.08" BlurRadius="12" ShadowDepth="1" Direction="270"/>
+        <DropShadowEffect x:Key="MenuShadow" Color="#000000" Opacity="0.14" BlurRadius="16" ShadowDepth="2" Direction="270"/>
+        <!-- 上に滲まないタイトな影 (タブ直下のツールバー用。ブラーが上の帯に掛かると線に見えるため) -->
+        <DropShadowEffect x:Key="CardShadowBelow" Color="#000000" Opacity="0.07" BlurRadius="6" ShadowDepth="2" Direction="270"/>
+        <!-- さらに控えめな影 (カードの上に載る入力欄など、二重に影が掛かる場所用) -->
+        <DropShadowEffect x:Key="SubtleShadow" Color="#000000" Opacity="0.05" BlurRadius="9" ShadowDepth="1" Direction="270"/>
+
+        <!-- アイコン: Win11 の丸みのある Segoe Fluent Icons (無い環境は MDL2 にフォールバック) -->
+        <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <!-- スリムな角丸スクロールバー (矢印なし・普段は細く、ホバーで少し太く) -->
+        <Style TargetType="ScrollBar">
+            <Setter Property="Width" Value="10"/>
+            <Setter Property="MinWidth" Value="10"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ScrollBar">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton x:Name="DecBtn" Command="ScrollBar.PageUpCommand" Focusable="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Rectangle Fill="Transparent"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton x:Name="IncBtn" Command="ScrollBar.PageDownCommand" Focusable="False">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Rectangle Fill="Transparent"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb>
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border x:Name="Tb" Background="{DynamicResource ScrollThumbBrush}"
+                                                        CornerRadius="3" Margin="3"/>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                        <Setter TargetName="Tb" Property="Background" Value="{DynamicResource ScrollThumbHoverBrush}"/>
+                                                        <Setter TargetName="Tb" Property="Margin" Value="2"/>
+                                                    </Trigger>
+                                                    <Trigger Property="IsDragging" Value="True">
+                                                        <Setter TargetName="Tb" Property="Background" Value="{DynamicResource ScrollThumbHoverBrush}"/>
+                                                        <Setter TargetName="Tb" Property="Margin" Value="2"/>
+                                                    </Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="Orientation" Value="Horizontal">
+                                <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                                <Setter TargetName="DecBtn" Property="Command" Value="ScrollBar.PageLeftCommand"/>
+                                <Setter TargetName="IncBtn" Property="Command" Value="ScrollBar.PageRightCommand"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="Orientation" Value="Horizontal">
+                    <Setter Property="Width" Value="Auto"/>
+                    <Setter Property="MinWidth" Value="0"/>
+                    <Setter Property="Height" Value="10"/>
+                    <Setter Property="MinHeight" Value="10"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- 現代的な角丸リスト行 (ホバー・選択ともに温色アクセント、選択時は左端にアクセントピル) -->
         <Style TargetType="ListBoxItem">
-            <Setter Property="Padding" Value="6,3"/>
-            <Setter Property="Margin" Value="4,1"/>
-            <Setter Property="Foreground" Value="#FF1B1B1B"/>
+            <Setter Property="Padding" Value="7,4"/>
+            <Setter Property="Margin" Value="5,1"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Bd"
-                                Background="{TemplateBinding Background}"
-                                CornerRadius="4"
-                                Padding="{TemplateBinding Padding}"
-                                SnapsToDevicePixels="True">
-                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
-                                              VerticalAlignment="Center"/>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="8"
+                                    Padding="{TemplateBinding Padding}"
+                                    SnapsToDevicePixels="True">
+                                <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                                  VerticalAlignment="Center"/>
+                            </Border>
+                            <Border x:Name="Pill" Width="3" Height="16" CornerRadius="1.5"
+                                    Background="{DynamicResource AccentBrush}"
+                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Margin="1,0,0,0" Visibility="Collapsed"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#14000000"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RowHoverBrush}"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#1F0078D4"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSelectBrush}"/>
+                                <Setter TargetName="Pill" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>
                                     <Condition Property="IsSelected" Value="True"/>
                                     <Condition Property="IsMouseOver" Value="True"/>
                                 </MultiTrigger.Conditions>
-                                <Setter TargetName="Bd" Property="Background" Value="#2E0078D4"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSelectHoverBrush}"/>
                             </MultiTrigger>
                             <!-- ドラッグ中のドロップ先フォルダー -->
                             <Trigger Property="local:DragDropHelper.DropHighlight" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#330078D4"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#990078D4"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentDropHighlightBrush}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentDropBorderBrush}"/>
                                 <Setter TargetName="Bd" Property="BorderThickness" Value="1"/>
                             </Trigger>
                             <!-- お気に入り並べ替え: 挿入位置を線で示す -->
                             <Trigger Property="local:DragDropHelper.DropInsert" Value="Before">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D4"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                 <Setter TargetName="Bd" Property="BorderThickness" Value="0,2,0,0"/>
                             </Trigger>
                             <Trigger Property="local:DragDropHelper.DropInsert" Value="After">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF0078D4"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
                                 <Setter TargetName="Bd" Property="BorderThickness" Value="0,0,0,2"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ドロップダウンの選択肢 (ソート基準など) -->
+        <Style TargetType="ComboBoxItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Padding" Value="9,5"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBoxItem">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}" Margin="2,1">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentCrumbHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsSelected" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSelectBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- アプリ独自のポップアップメニュー (グループ管理など。シェルの右クリックメニューは OS 描画のため対象外) -->
+        <Style TargetType="ContextMenu">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderSoftBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
+                                CornerRadius="10" Padding="4" Margin="6"
+                                Effect="{DynamicResource MenuShadow}">
+                            <ItemsPresenter/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Padding" Value="10,6"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="6"
+                                Padding="{TemplateBinding Padding}" Margin="2,1">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock x:Name="CheckMark" Grid.Column="0" FontFamily="{StaticResource IconFont}"
+                                           FontSize="11" Text="&#xE73E;" Margin="0,0,8,0"
+                                           Foreground="{DynamicResource AccentBrush}"
+                                           VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <ContentPresenter x:Name="IconHost" Grid.Column="0" ContentSource="Icon"
+                                                  Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header"
+                                                  VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                                <TextBlock x:Name="Gesture" Grid.Column="2" Text="{TemplateBinding InputGestureText}"
+                                           Foreground="{DynamicResource TextTertiaryBrush}"
+                                           Margin="18,0,0,0" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="Arrow" Grid.Column="2" FontFamily="{StaticResource IconFont}" FontSize="9"
+                                           Text="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
+                                           Margin="18,0,0,0" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <Popup x:Name="PART_Popup" Placement="Right" HorizontalOffset="-2" VerticalOffset="-8"
+                                       IsOpen="{TemplateBinding IsSubmenuOpen}" AllowsTransparency="True"
+                                       Focusable="False" PopupAnimation="Fade">
+                                    <Border Background="{DynamicResource SurfaceBrush}"
+                                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                                            CornerRadius="10" Padding="4" Margin="6"
+                                            Effect="{DynamicResource MenuShadow}">
+                                        <ItemsPresenter/>
+                                    </Border>
+                                </Popup>
+                            </Grid>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="HasItems" Value="True">
+                                <Setter TargetName="Arrow" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="Icon" Value="{x:Null}">
+                                <Setter TargetName="IconHost" Property="Visibility" Value="Collapsed"/>
+                            </Trigger>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentCrumbHoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Separator">
+                        <Border Height="1" Background="{DynamicResource BorderSoftBrush}" Margin="8,4"/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ツールチップも角丸カードに -->
+        <Style TargetType="ToolTip">
+            <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="HasDropShadow" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToolTip">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                                CornerRadius="8" Padding="10,7" Margin="6"
+                                Effect="{DynamicResource MenuShadow}">
+                            <ContentPresenter/>
+                        </Border>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>

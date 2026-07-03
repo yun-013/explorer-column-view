@@ -18,6 +18,105 @@ public partial class MainWindow : Window
         _vm = vm;
         DataContext = _vm;
         _vm.TabsEmptied += OnTabsEmptied;
+
+        // パンくずが長いときは先頭ではなく末尾 (現在地) を見せる
+        _vm.Breadcrumbs.CollectionChanged += (_, _) =>
+            Dispatcher.BeginInvoke(new Action(() => CrumbScroll.ScrollToRightEnd()),
+                System.Windows.Threading.DispatcherPriority.Loaded);
+        CrumbScroll.SizeChanged += (_, _) => CrumbScroll.ScrollToRightEnd();
+
+        // タブの増減・並べ替えで区切り線の表示状態を追従させる
+        _vm.Tabs.CollectionChanged += (_, _) => ScheduleTabSeparatorUpdate();
+    }
+
+    // ---- タブ列の見た目 (区切り線) と横スクロール ----
+
+    /// <summary>タブ区切り線の更新をレイアウト確定後に 1 回だけ実行する。</summary>
+    private void ScheduleTabSeparatorUpdate()
+        => Dispatcher.BeginInvoke(new Action(UpdateTabSeparators),
+            System.Windows.Threading.DispatcherPriority.Loaded);
+
+    /// <summary>
+    /// タブ間の区切り線: 隣り合う2つが両方とも非アクティブのときだけ表示する (Files/Chrome 風)。
+    /// テンプレートのトリガーだけでは「アクティブタブの左隣」を消せないためここで補正する。
+    /// タブは高々十数個なのでループのコストは無視できる。
+    /// </summary>
+    private void UpdateTabSeparators()
+    {
+        var gen = TabStrip.ItemContainerGenerator;
+        int count = TabStrip.Items.Count;
+        int sel = TabStrip.SelectedIndex;
+        for (int i = 0; i < count; i++)
+        {
+            if (gen.ContainerFromIndex(i) is not ListBoxItem item)
+                continue;
+            item.ApplyTemplate();
+            if (item.Template.FindName("Sep", item) is not Border sep)
+                continue;
+            // 最後のタブと、アクティブタブの左隣はローカル値で消す。
+            // それ以外はローカル値を外してテンプレートのトリガー (自身が選択/ホバー中は消す) に任せる
+            if (i == count - 1 || i == sel - 1)
+                sep.Visibility = Visibility.Collapsed;
+            else
+                sep.ClearValue(VisibilityProperty);
+        }
+    }
+
+    private void TabStrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TabStrip.SelectedItem is { } sel)
+            TabStrip.ScrollIntoView(sel);
+        ScheduleTabSeparatorUpdate();
+    }
+
+    /// <summary>タブが増えてもキャプションボタンを押し出さないよう、タブ列の幅を「+ ボタンを除いた残り」に収める。</summary>
+    private void CaptionBar_SizeChanged(object sender, SizeChangedEventArgs e)
+        => TabStrip.MaxWidth = Math.Max(0, TabArea.ActualWidth - NewTabButton.Width - 16);
+
+    /// <summary>タブ列の上では通常ホイールでも横スクロール (スクロールバーは出さない)。1ノッチ=40px。</summary>
+    private void TabStrip_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (FindDescendant<ScrollViewer>(TabStrip) is { } sv)
+        {
+            sv.ScrollToHorizontalOffset(sv.HorizontalOffset - e.Delta / 3.0);
+            e.Handled = true;
+        }
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T hit)
+                return hit;
+            if (FindDescendant<T>(child) is { } deep)
+                return deep;
+        }
+        return null;
+    }
+
+    /// <summary>アクティブタブを前後に切り替える (Ctrl+Tab / Ctrl+Shift+Tab)。</summary>
+    private void CycleTab(int dir)
+    {
+        var tabs = _vm.Tabs;
+        if (tabs.Count < 2 || _vm.ActiveTab is not { } current)
+            return;
+        int idx = tabs.IndexOf(current);
+        if (idx < 0)
+            return;
+        _vm.ActiveTab = tabs[(idx + dir + tabs.Count) % tabs.Count];
+    }
+
+    /// <summary>カラム表示エリアのホイール: Shift+ホイール、または列リスト外 (余白) では横スクロール。</summary>
+    private void Columns_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        var overList = FindAncestor<ListBox>(e.OriginalSource as DependencyObject) != null;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) || !overList)
+        {
+            ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset - e.Delta);
+            e.Handled = true;
+        }
     }
 
     /// <summary>タブが 0 個になったとき: 他にウィンドウがあれば閉じ、無ければ新規タブを開く。</summary>
@@ -38,6 +137,8 @@ public partial class MainWindow : Window
     private static extern bool RemoveClipboardFormatListener(nint hwnd);
 
     private const int WM_CLIPBOARDUPDATE = 0x031D;
+    private const int WM_MOUSEHWHEEL = 0x020E;
+    private const int WM_SETTINGCHANGE = 0x001A;
 
     /// <summary>全ウィンドウの表示にコピー / 切り取りマークを反映する。</summary>
     private static void RefreshClipboardMarksAllWindows()
@@ -46,16 +147,65 @@ public partial class MainWindow : Window
             w._vm.ApplyClipboardMarks();
     }
 
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint hwnd, int attr, ref int value, int size);
+
     protected override void OnSourceInitialized(EventArgs e)
     {
         base.OnSourceInitialized(e);
         var hwnd = new WindowInteropHelper(this).Handle;
         AddClipboardFormatListener(hwnd);
         HwndSource.FromHwnd(hwnd)?.AddHook(ClipboardWndProc);
+
+        // Win11 の DWM にウィンドウ自体を角丸にしてもらう
+        // (WindowStyle=None + 透過背景では四隅が黒く残るため)。Win10 では失敗しても無害
+        try
+        {
+            var pref = 2; // DWMWCP_ROUND
+            _ = DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref pref, sizeof(int));
+        }
+        catch
+        {
+            // dwmapi が無い環境では従来どおり
+        }
     }
 
     private nint ClipboardWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
+        // システムのライト/ダーク切替に追従
+        if (msg == WM_SETTINGCHANGE)
+        {
+            try
+            {
+                if (lParam != 0 &&
+                    System.Runtime.InteropServices.Marshal.PtrToStringUni(lParam) == "ImmersiveColorSet")
+                    Dispatcher.BeginInvoke(new Action(App.ApplySystemTheme));
+            }
+            catch
+            {
+                // lParam が文字列でないブロードキャストは無視
+            }
+            return 0;
+        }
+
+        // チルトホイール (WPF は WM_MOUSEHWHEEL を標準ではルーティングしない)
+        if (msg == WM_MOUSEHWHEEL)
+        {
+            int delta = unchecked((short)((wParam.ToInt64() >> 16) & 0xFFFF)); // 正 = 右チルト
+            if (TabStrip.IsMouseOver)
+            {
+                if (FindDescendant<ScrollViewer>(TabStrip) is { } sv)
+                    sv.ScrollToHorizontalOffset(sv.HorizontalOffset + delta / 3.0);
+                handled = true;
+            }
+            else if (ColumnsScroll.IsMouseOver)
+            {
+                ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset + delta);
+                handled = true;
+            }
+            return 0;
+        }
+
         if (msg == WM_CLIPBOARDUPDATE && !ClipboardMarks.IsEmpty)
         {
             // 自アプリの書き込み直後にも飛んでくるので、中身がマークと一致していれば維持し、
@@ -84,12 +234,22 @@ public partial class MainWindow : Window
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
+    /// <summary>カラム表示カードの角丸に合わせて中身をクリップ (列の背景や区切り線が角からはみ出さないように)。
+    /// カード自身ではなく中身の ScrollViewer に掛ける (カードに掛けると影ごと切られる)。リサイズ時のみ。</summary>
+    private void ColumnsCard_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var fe = (FrameworkElement)sender;
+        fe.Clip = new RectangleGeometry(new Rect(0, 0, fe.ActualWidth, fe.ActualHeight), 11, 11);
+    }
+
     private void Window_StateChanged(object sender, EventArgs e)
     {
         var maximized = WindowState == WindowState.Maximized;
         // 最大化時はリサイズ枠ぶんはみ出すのでパディングで内側に収める
         RootDock.Margin = maximized ? new Thickness(7) : new Thickness(0);
         RootBorder.BorderThickness = maximized ? new Thickness(0) : new Thickness(1);
+        // 最大化時は画面いっぱいになるため角丸を解除 (透明な欠けを防ぐ)
+        RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(10);
         MaxButton.Content = char.ConvertFromUtf32(maximized ? 0xE923 : 0xE922); // 元に戻す / 最大化
     }
 
@@ -1263,6 +1423,10 @@ public partial class MainWindow : Window
         {
             switch (e.Key)
             {
+                case Key.Tab:
+                    CycleTab(-1);
+                    e.Handled = true;
+                    break;
                 case Key.N:
                     e.Handled = true;
                     await NewFolderFlow();
@@ -1283,6 +1447,10 @@ public partial class MainWindow : Window
 
         switch (e.Key)
         {
+            case Key.Tab:
+                CycleTab(1);
+                e.Handled = true;
+                break;
             case Key.T:
                 await _vm.NewTabAsync(null);
                 e.Handled = true;

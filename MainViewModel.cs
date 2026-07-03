@@ -184,7 +184,7 @@ public class MainViewModel : ObservableObject
             _settings.ShowHidden = value;
             _settings.Save();
             Raise();
-            _ = ReloadActiveTabAsync();
+            _ = ReloadAllColumnsAsync();
         }
     }
 
@@ -617,12 +617,28 @@ public class MainViewModel : ObservableObject
         PushHistory(ActiveTab, path);
     }
 
-    private async Task ReloadActiveTabAsync()
+    /// <summary>全タブの全列をその場で再読込する (隠しファイル切替など)。開いている階層と選択は維持。</summary>
+    private async Task ReloadAllColumnsAsync()
     {
-        if (ActiveTab is null)
-            return;
-        var root = ActiveTab.Columns.FirstOrDefault()?.Path;
-        await ResetTabAsync(ActiveTab, root);
+        _navigating = true;
+        try
+        {
+            foreach (var tab in Tabs)
+            {
+                foreach (var column in tab.Columns)
+                {
+                    var selectedPath = column.SelectedItem?.Path;
+                    await column.LoadAsync(ShowHidden, CurrentComparison);
+                    if (selectedPath is not null)
+                        column.SelectedItem = column.Items.FirstOrDefault(
+                            i => string.Equals(i.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
+                }
+            }
+        }
+        finally
+        {
+            _navigating = false;
+        }
     }
 
     /// <summary>列で項目が選択されたときの中核ロジック</summary>

@@ -83,6 +83,14 @@ public class FileSystemItem : ObservableObject
     /// <summary>ホーム列のドライブ・特殊フォルダなど、実パスのアイコンを使う項目</summary>
     public bool UseRealIcon { get; init; }
 
+    /// <summary>ドライブ項目の使用率 (0〜1)。ドライブ以外は null で容量ゲージ非表示。</summary>
+    public double? DriveUsedRatio { get; init; }
+    public bool IsLowSpace => DriveUsedRatio is > 0.9;
+    public Visibility DriveGaugeVisibility => DriveUsedRatio is null ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>ドライブ項目の容量表示 (例: 空き 123 GB / 476 GB)。ホーム列生成時に一度だけ計算。</summary>
+    public string? DriveCapacityText { get; init; }
+
     /// <summary>ホーム列のお気に入り項目 (★バッジ表示)</summary>
     public bool IsFavoriteEntry { get; init; }
 
@@ -677,6 +685,10 @@ public class ColumnModel : ObservableObject, IDisposable
                 Name = $"{label} ({drive.Name.TrimEnd('\\')})",
                 IsDirectory = true,
                 UseRealIcon = true,
+                DriveUsedRatio = drive.TotalSize > 0
+                    ? 1.0 - (double)drive.TotalFreeSpace / drive.TotalSize : null,
+                DriveCapacityText = drive.TotalSize > 0
+                    ? $"空き {FileSystemItem.FormatSize(drive.TotalFreeSpace)} / {FileSystemItem.FormatSize(drive.TotalSize)}" : null,
             });
         }
 

@@ -4,15 +4,16 @@
         xmlns:local="clr-namespace:ColumnView"
         Title="Column View"
         Height="680" Width="1180"
+        MinHeight="340" MinWidth="520"
         FontFamily="{DynamicResource {x:Static SystemFonts.MessageFontFamilyKey}}" FontSize="13"
         WindowStyle="None"
-        Background="Transparent"
+        Background="{DynamicResource WindowBackgroundBrush}"
         StateChanged="Window_StateChanged"
         PreviewKeyDown="Window_PreviewKeyDown"
         PreviewMouseMove="Window_PreviewMouseMove">
 
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" CornerRadius="0"
+        <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" CornerRadius="10"
                       GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
 
@@ -26,25 +27,25 @@
             <Setter Property="Margin" Value="1,0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
             <Setter Property="FontSize" Value="14"/>
-            <Setter Property="Foreground" Value="#FF1B1B1B"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ButtonBase">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="5">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#16000000"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverOverlayBrush}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#22000000"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource PressedOverlayBrush}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#FFBDBDBD"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -55,40 +56,55 @@
         <Style x:Key="ToggleToolButton" TargetType="ToggleButton" BasedOn="{StaticResource ToolButton}">
             <Style.Triggers>
                 <Trigger Property="IsChecked" Value="True">
-                    <Setter Property="Background" Value="#280078D4"/>
+                    <Setter Property="Background" Value="{DynamicResource AccentFocusBrush}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
 
-        <!-- キャプション (最小化/最大化/閉じる) ボタン -->
+        <!-- お気に入り: 未登録=白抜き星 / 登録済み=アクセント色の塗り星 -->
+        <Style x:Key="FavoriteToggle" TargetType="ToggleButton" BasedOn="{StaticResource ToggleToolButton}">
+            <Setter Property="Content" Value="&#xE734;"/>
+            <Style.Triggers>
+                <Trigger Property="IsChecked" Value="True">
+                    <Setter Property="Content" Value="&#xE735;"/>
+                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- キャプション (最小化/最大化/閉じる) ボタン: それぞれ独立した角丸チップに。
+             ホバー色はテンプレート内ではなくスタイル側で切り替える (閉じるだけ赤に上書きするため) -->
         <Style x:Key="CaptionButton" TargetType="Button">
-            <Setter Property="Width" Value="46"/>
-            <Setter Property="Height" Value="40"/>
+            <Setter Property="Width" Value="34"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Margin" Value="3,0"/>
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#FF202020"/>
-            <Setter Property="FontFamily" Value="Segoe MDL2 Assets"/>
-            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="9"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
-                        <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#14000000"/>
-                            </Trigger>
-                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource HoverOverlayBrush}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <Style x:Key="CaptionCloseButton" TargetType="Button" BasedOn="{StaticResource CaptionButton}">
             <Style.Triggers>
                 <Trigger Property="IsMouseOver" Value="True">
-                    <Setter Property="Background" Value="#FFE81123"/>
+                    <Setter Property="Background" Value="#FFE0553F"/>
                     <Setter Property="Foreground" Value="White"/>
                 </Trigger>
             </Style.Triggers>
@@ -102,30 +118,59 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Bd" CornerRadius="8,8,0,0" Background="Transparent"
-                                Padding="11,7" MinWidth="130" MaxWidth="220">
-                            <DockPanel LastChildFill="True">
-                                <Button DockPanel.Dock="Right" Width="18" Height="18" Margin="6,0,0,0"
-                                        Background="Transparent" BorderThickness="0" Cursor="Hand"
-                                        FontFamily="Segoe MDL2 Assets" FontSize="9" Content="&#xE711;"
-                                        Foreground="#FF606060"
-                                        ToolTip="タブを閉じる (Ctrl+W)"
-                                        Click="CloseTab_Click" Tag="{Binding}"/>
-                                <TextBlock Text="{Binding Title}" VerticalAlignment="Center"
-                                           TextTrimming="CharacterEllipsis"/>
-                            </DockPanel>
-                        </Border>
+                        <Grid>
+                            <Border x:Name="Bd" CornerRadius="10,10,0,0" Background="Transparent"
+                                    Padding="11,7" MinWidth="130" MaxWidth="220">
+                                <DockPanel LastChildFill="True">
+                                    <Button DockPanel.Dock="Right" Width="18" Height="18" Margin="6,0,0,0"
+                                            Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                            FontFamily="{StaticResource IconFont}" FontSize="9" Content="&#xE711;"
+                                            Foreground="{DynamicResource TextSecondaryBrush}"
+                                            ToolTip="タブを閉じる (Ctrl+W)"
+                                            Click="CloseTab_Click" Tag="{Binding}"/>
+                                    <TextBlock x:Name="TabTitle" Text="{Binding Title}" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource TextSecondaryBrush}"
+                                               TextTrimming="CharacterEllipsis"/>
+                                </DockPanel>
+                            </Border>
+                            <!-- 非アクティブタブ同士の区切り線 (Files 風) -->
+                            <Border x:Name="Sep" Width="1" Height="14" Background="{DynamicResource WindowOuterBorderBrush}"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center"/>
+                            <!-- アクティブタブの「すそ野」: 付け根が外側へなだらかに広がる凹みの丸み (Chrome/Files 風) -->
+                            <Path x:Name="FlareL" Width="8" Height="8" Stretch="None" Visibility="Collapsed"
+                                  HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-8,0,0,0"
+                                  Fill="{DynamicResource WindowBackgroundBrush}"
+                                  Data="M 8,0 A 8,8 0 0 1 0,8 L 8,8 Z"/>
+                            <Path x:Name="FlareR" Width="8" Height="8" Stretch="None" Visibility="Collapsed"
+                                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-8,0"
+                                  Fill="{DynamicResource WindowBackgroundBrush}"
+                                  Data="M 0,0 A 8,8 0 0 0 8,8 L 0,8 Z"/>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#60FFFFFF"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource TabHoverBrush}"/>
+                                <Setter TargetName="Sep" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="TabTitle" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </Trigger>
+                            <!-- アクティブタブは下のウィンドウ背景と同色にして繋げ、文字を濃く・太くして際立たせる -->
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="White"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource WindowBackgroundBrush}"/>
+                                <Setter TargetName="Sep" Property="Visibility" Value="Collapsed"/>
+                                <Setter TargetName="TabTitle" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+                                <Setter TargetName="TabTitle" Property="FontWeight" Value="SemiBold"/>
+                                <Setter TargetName="FlareL" Property="Visibility" Value="Visible"/>
+                                <Setter TargetName="FlareR" Property="Visibility" Value="Visible"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
+            <Style.Triggers>
+                <!-- すそ野が隣のタブの描画に覆われないよう、アクティブタブを手前に -->
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Panel.ZIndex" Value="1"/>
+                </Trigger>
+            </Style.Triggers>
         </Style>
 
         <!-- 通常のファイル / フォルダー行 (ホーム列のお気に入り・グループメンバーも含む) -->
@@ -148,7 +193,7 @@
                             </Grid.RowDefinitions>
                             <Grid.Resources>
                                 <Style TargetType="TextBlock" x:Key="Label">
-                                    <Setter Property="Foreground" Value="#FF707070"/>
+                                    <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
                                     <Setter Property="Margin" Value="0,1,12,1"/>
                                 </Style>
                                 <Style TargetType="TextBlock" x:Key="Value">
@@ -191,14 +236,43 @@
                 </Grid.ColumnDefinitions>
                 <Image Grid.Column="0" Width="16" Height="16"
                        Source="{Binding Icon}" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="1" Text="{Binding Name}"
-                           Margin="4,0,0,0" VerticalAlignment="Center"
-                           TextTrimming="CharacterEllipsis"/>
-                <TextBlock Grid.Column="2" FontFamily="Segoe MDL2 Assets" FontSize="11"
+                <StackPanel Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                    <!-- ドライブの容量ゲージ (残量わずかで赤) -->
+                    <ProgressBar Height="3" Margin="0,3,6,0" Minimum="0" Maximum="1"
+                                 Value="{Binding DriveUsedRatio, Mode=OneWay}"
+                                 Visibility="{Binding DriveGaugeVisibility}">
+                        <ProgressBar.Style>
+                            <Style TargetType="ProgressBar">
+                                <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ProgressBar">
+                                            <Grid>
+                                                <Border x:Name="PART_Track" Background="{DynamicResource BorderSoftBrush}" CornerRadius="1.5"/>
+                                                <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}"
+                                                        CornerRadius="1.5" HorizontalAlignment="Left"/>
+                                            </Grid>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsLowSpace}" Value="True">
+                                        <Setter Property="Foreground" Value="#FFD9534F"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ProgressBar.Style>
+                    </ProgressBar>
+                    <TextBlock Text="{Binding DriveCapacityText}" FontSize="10.5"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               Margin="0,2,0,0" Visibility="{Binding DriveGaugeVisibility}"/>
+                </StackPanel>
+                <TextBlock Grid.Column="2" FontFamily="{StaticResource IconFont}" FontSize="11"
                            Text="{Binding Badge}" Foreground="{Binding BadgeBrush}"
                            VerticalAlignment="Center" HorizontalAlignment="Center"/>
-                <TextBlock Grid.Column="3" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                           Text="&#xE76C;" Foreground="#FFB0B0B6"
+                <TextBlock Grid.Column="3" FontFamily="{StaticResource IconFont}" FontSize="9"
+                           Text="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
                            Visibility="{Binding ChevronVisibility}"
                            VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
@@ -214,16 +288,16 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="14"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" FontFamily="Segoe MDL2 Assets" FontSize="14"
-                           Text="&#xE71D;" Foreground="#FF6B5BD2"
+                <TextBlock Grid.Column="0" FontFamily="{StaticResource IconFont}" FontSize="14"
+                           Text="&#xE71D;" Foreground="{DynamicResource AccentBrush}"
                            VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold"
                            Margin="4,0,0,0" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"/>
-                <TextBlock Grid.Column="2" Text="{Binding MemberCount}" Foreground="#FF9090A0"
+                <TextBlock Grid.Column="2" Text="{Binding MemberCount}" Foreground="{DynamicResource TextSecondaryBrush}"
                            Margin="2,0,4,0" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="3" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                           Text="&#xE76C;" Foreground="#FFB0B0B6"
+                <TextBlock Grid.Column="3" FontFamily="{StaticResource IconFont}" FontSize="9"
+                           Text="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
                            VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
         </DataTemplate>
@@ -237,20 +311,74 @@
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding" Value="6,2"/>
-            <Setter Property="Foreground" Value="#FF1B1B1B"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="3"
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="6"
                                 Padding="{TemplateBinding Padding}">
                             <ContentPresenter VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#1A0078D4"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentCrumbHoverBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ソート基準のドロップダウン (ツールバーのアイコンボタンと揃えたフラットな見た目) -->
+        <Style x:Key="SortComboBox" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Bd" Background="{DynamicResource SurfaceBrush}" CornerRadius="8"
+                                                BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"/>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ChipHoverBrush}"/>
+                                            </Trigger>
+                                            <Trigger Property="IsChecked" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ChipPressedBrush}"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                            <DockPanel Margin="10,0,9,0" IsHitTestVisible="False">
+                                <TextBlock DockPanel.Dock="Right" FontFamily="{StaticResource IconFont}" FontSize="8"
+                                           Text="&#xE70D;" Foreground="{DynamicResource TextSecondaryBrush}"
+                                           VerticalAlignment="Center" Margin="6,0,0,0"/>
+                                <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  VerticalAlignment="Center"/>
+                            </DockPanel>
+                            <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Placement="Bottom" VerticalOffset="-2"
+                                   PopupAnimation="Fade" StaysOpen="False">
+                                <Border Background="{DynamicResource SurfaceBrush}"
+                                        BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                                        CornerRadius="10" Padding="4" Margin="6"
+                                        Effect="{DynamicResource MenuShadow}"
+                                        MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
+                                    <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -258,38 +386,60 @@
     </Window.Resources>
 
     <!-- ルート枠 (WindowStyle=None のため自前で薄い枠) -->
-    <Border x:Name="RootBorder" Background="#FFF3F3F3" BorderBrush="#FF9AA0A6" BorderThickness="1">
+    <Border x:Name="RootBorder" Background="{DynamicResource WindowBackgroundBrush}"
+            BorderBrush="{DynamicResource WindowOuterBorderBrush}" BorderThickness="1" CornerRadius="10">
         <DockPanel x:Name="RootDock">
 
             <!-- 最上段: タブ列 + キャプションボタン (Chrome 風) -->
-            <Grid x:Name="CaptionBar" DockPanel.Dock="Top" Height="40" Background="#FFDDE1E6">
+            <Grid x:Name="CaptionBar" DockPanel.Dock="Top" Height="40" Background="{DynamicResource CaptionBarBrush}"
+                  SizeChanged="CaptionBar_SizeChanged">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
+                    <!-- タブが増えてもキャプションボタンを押し出さない (タブ側をクリップ) -->
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" Orientation="Horizontal"
+                <Grid x:Name="TabArea" Grid.Column="0" ClipToBounds="True">
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Left"
                             WindowChrome.IsHitTestVisibleInChrome="True">
                     <ListBox x:Name="TabStrip" ItemsSource="{Binding Tabs}" SelectedItem="{Binding ActiveTab}"
                              ItemContainerStyle="{StaticResource TabItemStyle}"
-                             Background="Transparent" BorderThickness="0"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             Background="Transparent" BorderThickness="0" Padding="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Hidden"
                              ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                             ScrollViewer.CanContentScroll="False"
+                             ScrollViewer.PanningMode="HorizontalOnly"
+                             SelectionChanged="TabStrip_SelectionChanged"
+                             PreviewMouseWheel="TabStrip_PreviewMouseWheel"
                              PreviewMouseLeftButtonDown="TabStrip_PreviewMouseLeftButtonDown"
                              PreviewMouseLeftButtonUp="TabStrip_PreviewMouseLeftButtonUp">
                         <ListBox.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <StackPanel Orientation="Horizontal"/>
+                                <!-- 左右 8px はアクティブタブのすそ野の逃げ場 (スクロール内容側に持たせ、端でクリップさせない) -->
+                                <StackPanel Orientation="Horizontal" Margin="8,0"/>
                             </ItemsPanelTemplate>
                         </ListBox.ItemsPanel>
+                        <!-- 標準テンプレートは Border に Padding=1 が焼き込まれていて (Padding=0 でも消えない)、
+                             タブが上下 1px 縮んで下端にキャプション色の線が出る。素の ScrollViewer に差し替えて根治 -->
+                        <ListBox.Template>
+                            <ControlTemplate TargetType="ListBox">
+                                <ScrollViewer Focusable="False"
+                                              HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollBarVisibility="Disabled"
+                                              CanContentScroll="False">
+                                    <ItemsPresenter/>
+                                </ScrollViewer>
+                            </ControlTemplate>
+                        </ListBox.Template>
                     </ListBox>
-                    <Button Style="{StaticResource ToolButton}" Width="32" Height="28" Margin="4,7,0,0"
+                    <Button x:Name="NewTabButton" Style="{StaticResource ToolButton}" Width="32" Height="28" Margin="4,7,0,0"
                             VerticalAlignment="Top" Content="&#xE710;"
                             ToolTip="新しいタブ (Ctrl+T)" Click="NewTab_Click"/>
                 </StackPanel>
+                </Grid>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,8,0">
                     <Button Style="{StaticResource CaptionButton}" Content="&#xE921;"
                             ToolTip="最小化" Click="Minimize_Click"/>
                     <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Content="&#xE922;"
@@ -299,9 +449,11 @@
                 </StackPanel>
             </Grid>
 
-            <!-- ツールバー -->
-            <Border DockPanel.Dock="Top" Background="White" Padding="8,6"
-                    BorderBrush="#FFE0E0E2" BorderThickness="0,0,0,1">
+            <!-- ツールバー: 独立した浮遊カード -->
+            <Border DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}" Padding="7,7"
+                    Margin="6,4,6,4" CornerRadius="12"
+                    BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                    Effect="{DynamicResource CardShadowBelow}">
                 <DockPanel>
                     <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Content="&#xE72B;"
                             ToolTip="戻る (Alt+←)" IsEnabled="{Binding CanGoBack}" Click="Back_Click"/>
@@ -309,17 +461,17 @@
                             ToolTip="進む (Alt+→)" IsEnabled="{Binding CanGoForward}" Click="Forward_Click"/>
                     <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Content="&#xE70E;"
                             ToolTip="上へ (Alt+↑)" IsEnabled="{Binding CanGoUp}" Click="Up_Click"/>
-                    <Border DockPanel.Dock="Left" Width="1" Background="#FFE0E0E2" Margin="5,3"/>
+                    <Border DockPanel.Dock="Left" Width="1" Background="{DynamicResource BorderSoftBrush}" Margin="5,3"/>
 
                     <!-- 右側のボタン群 -->
-                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE735;"
+                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource FavoriteToggle}"
                                   ToolTip="現在のフォルダーをお気に入りに追加 / 削除"
                                   IsChecked="{Binding IsCurrentFavorite, Mode=OneWay}" Click="Favorite_Click"/>
                     <Button x:Name="GroupsButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
-                            Content="&#xE71D;" Foreground="#FF6B5BD2"
+                            Content="&#xE71D;" Foreground="{DynamicResource AccentBrush}"
                             ToolTip="タブグループ (よく使うフォルダーの組合せをワンクリックで開く)"
                             Click="GroupsButton_Click"/>
-                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xED1A;"
+                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE7B3;"
                                   ToolTip="隠しファイルを表示 (Ctrl+H)" IsChecked="{Binding ShowHidden}"/>
                     <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
                             ToolTip="昇順 / 降順の切り替え" Click="SortDirection_Click">
@@ -338,8 +490,8 @@
                             </TextBlock>
                         </Button.Content>
                     </Button>
-                    <ComboBox DockPanel.Dock="Right" Width="104" Height="30" Margin="4,0"
-                              VerticalContentAlignment="Center" ToolTip="並べ替えの基準"
+                    <ComboBox DockPanel.Dock="Right" Width="92" Height="30" Margin="2,0"
+                              Style="{StaticResource SortComboBox}" ToolTip="並べ替えの基準"
                               SelectedIndex="{Binding SortKeyIndex}">
                         <ComboBoxItem Content="名前"/>
                         <ComboBoxItem Content="更新日時"/>
@@ -347,9 +499,10 @@
                         <ComboBoxItem Content="種類"/>
                     </ComboBox>
 
-                    <!-- アドレスバー: パンくず or 編集テキスト -->
-                    <Border x:Name="AddressBar" Margin="4,0" Height="30" Background="White"
-                            BorderBrush="#FFCFCFCF" BorderThickness="1" CornerRadius="4"
+                    <!-- アドレスバー: カードの上にさらに浮かぶ入力欄 (二重シャドウ) -->
+                    <Border x:Name="AddressBar" Margin="6,0" Height="32" Background="{DynamicResource SurfaceBrush}"
+                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
+                            Effect="{DynamicResource SubtleShadow}"
                             MouseLeftButtonDown="AddressBar_MouseLeftButtonDown">
                         <Grid>
                             <DockPanel>
@@ -363,9 +516,13 @@
                                         </Style.Triggers>
                                     </Style>
                                 </DockPanel.Style>
-                                <TextBlock DockPanel.Dock="Left" FontFamily="Segoe MDL2 Assets" FontSize="13"
+                                <TextBlock DockPanel.Dock="Left" FontFamily="{StaticResource IconFont}" FontSize="13"
                                            Text="&#xE8B7;" Foreground="#FFE3A52E" Margin="8,0,2,0"
                                            VerticalAlignment="Center"/>
+                                <!-- 深い階層では先頭ではなく末尾 (現在地) 側を見せる -->
+                                <ScrollViewer x:Name="CrumbScroll" HorizontalScrollBarVisibility="Hidden"
+                                              VerticalScrollBarVisibility="Disabled" Focusable="False"
+                                              VerticalAlignment="Center">
                                 <ItemsControl ItemsSource="{Binding Breadcrumbs}" VerticalAlignment="Center">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
@@ -375,8 +532,8 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type local:Crumb}">
                                             <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="&#xE76C;" FontFamily="Segoe MDL2 Assets" FontSize="9"
-                                                           Foreground="#FFA0A0A6" VerticalAlignment="Center" Margin="1,0">
+                                                <TextBlock Text="&#xE76C;" FontFamily="{StaticResource IconFont}" FontSize="9"
+                                                           Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="1,0">
                                                     <TextBlock.Style>
                                                         <Style TargetType="TextBlock">
                                                             <Setter Property="Visibility" Value="Visible"/>
@@ -394,6 +551,7 @@
                                         </DataTemplate>
                                     </ItemsControl.ItemTemplate>
                                 </ItemsControl>
+                                </ScrollViewer>
                             </DockPanel>
 
                             <TextBox x:Name="PathBox" BorderThickness="0" Background="Transparent"
@@ -406,27 +564,32 @@
                 </DockPanel>
             </Border>
 
-            <!-- ステータスバー -->
-            <StatusBar DockPanel.Dock="Bottom" Background="#FFF8F8F8" BorderBrush="#FFE0E0E2" BorderThickness="0,1,0,0">
+            <!-- ステータスバー: 線で区切らず最背面 (ウィンドウ背景) にそのまま載せる -->
+            <StatusBar DockPanel.Dock="Bottom" Background="Transparent" BorderThickness="0" Margin="8,0,8,2">
                 <StatusBarItem>
-                    <TextBlock Text="{Binding StatusText}"/>
+                    <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextPrimaryBrush}"/>
                 </StatusBarItem>
                 <StatusBarItem HorizontalAlignment="Right">
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Space: プレビュー (Seer)   " Foreground="#FF888890"/>
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE753;" Foreground="SteelBlue" VerticalAlignment="Center"/>
-                        <TextBlock Text=" オンラインのみ  " Foreground="#FF888890"/>
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE73E;" Foreground="SeaGreen" VerticalAlignment="Center"/>
-                        <TextBlock Text=" ローカルあり  " Foreground="#FF888890"/>
-                        <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE840;" Foreground="SeaGreen" VerticalAlignment="Center"/>
-                        <TextBlock Text=" 常に保持" Foreground="#FF888890"/>
+                        <TextBlock Text="Space: プレビュー (Seer)   " Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE753;" Foreground="SteelBlue" VerticalAlignment="Center"/>
+                        <TextBlock Text=" オンラインのみ  " Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE73E;" Foreground="SeaGreen" VerticalAlignment="Center"/>
+                        <TextBlock Text=" ローカルあり  " Foreground="{DynamicResource TextSecondaryBrush}"/>
+                        <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE840;" Foreground="SeaGreen" VerticalAlignment="Center"/>
+                        <TextBlock Text=" 常に保持" Foreground="{DynamicResource TextSecondaryBrush}"/>
                     </StackPanel>
                 </StatusBarItem>
             </StatusBar>
 
-            <!-- カラム表示 -->
-            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
-                          Background="White">
+            <!-- カラム表示: 独立した浮遊カード (背景をこのカード1枚に統一し、開いている列と余白の色差を無くす) -->
+            <Border x:Name="ColumnsCard" Margin="6,0,6,4" CornerRadius="12" Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                    Effect="{DynamicResource CardShadowBelow}">
+            <!-- 角丸クリップはカードではなく中身に掛ける (カードに掛けると外側の影ごと切られて消える) -->
+            <ScrollViewer x:Name="ColumnsScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"
+                          Background="Transparent" PreviewMouseWheel="Columns_PreviewMouseWheel"
+                          SizeChanged="ColumnsCard_SizeChanged">
                 <ItemsControl x:Name="ColumnsHost" ItemsSource="{Binding ActiveTab.Columns}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>
@@ -435,11 +598,12 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:ColumnModel}">
-                            <Border Width="216" BorderBrush="#FFE8E8EA" BorderThickness="0,0,1,0"
+                            <Border Width="216" BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="0,0,1,0"
                                     Loaded="Column_Loaded">
                                 <Grid>
                                     <ListBox ItemsSource="{Binding Items}"
                                              SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                                             Background="Transparent"
                                              BorderThickness="0"
                                              SelectionMode="Extended"
                                              TextSearch.TextPath="Name"
@@ -460,6 +624,24 @@
                                              Drop="Column_Drop"
                                              ItemTemplateSelector="{StaticResource ColumnItemSelector}">
                                     </ListBox>
+                                    <TextBlock Text="このフォルダーは空です"
+                                               Foreground="{DynamicResource TextTertiaryBrush}"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                <Style.Triggers>
+                                                    <MultiDataTrigger>
+                                                        <MultiDataTrigger.Conditions>
+                                                            <Condition Binding="{Binding Items.Count}" Value="0"/>
+                                                            <Condition Binding="{Binding Error}" Value="{x:Null}"/>
+                                                        </MultiDataTrigger.Conditions>
+                                                        <Setter Property="Visibility" Value="Visible"/>
+                                                    </MultiDataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
                                     <TextBlock Text="{Binding Error}" Margin="10" TextWrapping="Wrap"
                                                Foreground="#FFC04040" VerticalAlignment="Top">
                                         <TextBlock.Style>
@@ -479,6 +661,7 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </ScrollViewer>
+            </Border>
         </DockPanel>
     </Border>
 </Window>
