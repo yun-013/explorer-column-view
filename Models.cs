@@ -352,6 +352,9 @@ public class ColumnModel : ObservableObject, IDisposable
     /// <summary>検索結果の列。中身は検索側から流し込まれ、LoadAsync では作り直さない。</summary>
     public bool IsSearch { get; }
 
+    /// <summary>検索列の検索語 (列ヘッダーの表示用)。</summary>
+    public string SearchQuery { get; private set; } = "";
+
     /// <summary>実行中の検索。列が閉じられたら Dispose で確実に止める。</summary>
     public CancellationTokenSource? SearchCts { get; set; }
 
@@ -387,7 +390,7 @@ public class ColumnModel : ObservableObject, IDisposable
     private ColumnModel(bool isSearch) => IsSearch = isSearch;
 
     /// <summary>検索結果を表示する列を作る。</summary>
-    public static ColumnModel CreateSearch() => new(isSearch: true);
+    public static ColumnModel CreateSearch(string query) => new(isSearch: true) { SearchQuery = query };
 
     public async Task LoadAsync(bool showHidden, Comparison<FileSystemItem> comparison)
     {

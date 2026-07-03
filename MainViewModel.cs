@@ -529,7 +529,7 @@ public class MainViewModel : ObservableObject
                 index = i;
         TrimColumns(tab, index >= 0 ? index + 1 : tab.Columns.Count);
 
-        var column = ColumnModel.CreateSearch();
+        var column = ColumnModel.CreateSearch(query);
         var cts = new CancellationTokenSource();
         _searchCts = cts;
         column.SearchCts = cts; // 列が閉じられたら (ナビゲーション等) 走査も止まる

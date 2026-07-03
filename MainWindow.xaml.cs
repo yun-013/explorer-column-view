@@ -1404,6 +1404,59 @@ public partial class MainWindow : Window
 
     // ---- 検索 ----
 
+    /// <summary>ツールバーがこの幅を下回ったら検索ボックスをアイコンだけに畳む
+    /// (アドレスバーの表示幅を優先する)。</summary>
+    private const double SearchCompactThreshold = 800;
+
+    private bool _searchCompact;
+    private bool _searchExpanded;
+
+    private void Toolbar_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < SearchCompactThreshold;
+        if (compact == _searchCompact)
+            return;
+        _searchCompact = compact;
+        if (!compact)
+            _searchExpanded = false;
+        ApplySearchVisibility();
+    }
+
+    private void ApplySearchVisibility()
+    {
+        // 狭くても、開いている最中・入力が残っている間はボックスを見せ続ける
+        var showBox = !_searchCompact || _searchExpanded || SearchBox.Text.Length > 0;
+        SearchBorder.Visibility = showBox ? Visibility.Visible : Visibility.Collapsed;
+        SearchToggleButton.Visibility = showBox ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ExpandSearchBox()
+    {
+        _searchExpanded = true;
+        ApplySearchVisibility();
+        SearchBox.Focus();
+        SearchBox.SelectAll();
+    }
+
+    private void SearchToggle_Click(object sender, RoutedEventArgs e) => ExpandSearchBox();
+
+    private void SearchClear_Click(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Clear();
+        _vm.CancelSearch();
+        SearchBox.Focus();
+    }
+
+    private void SearchBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        // 空のままフォーカスが外れたらアイコンに戻す (入力が残っていれば出したまま)
+        if (SearchBox.Text.Length == 0)
+        {
+            _searchExpanded = false;
+            ApplySearchVisibility();
+        }
+    }
+
     private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
@@ -1503,8 +1556,7 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
             case Key.F:
-                SearchBox.Focus();
-                SearchBox.SelectAll();
+                ExpandSearchBox();
                 e.Handled = true;
                 break;
             case Key.V:

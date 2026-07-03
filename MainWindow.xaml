@@ -232,8 +232,9 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="22"/>
                     <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="20"/>
-                    <ColumnDefinition Width="14"/>
+                    <!-- バッジ / シェブロンは Auto: 無い行では名前の表示幅に回す -->
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Image Grid.Column="0" Width="16" Height="16"
                        Source="{Binding Icon}" VerticalAlignment="Center"/>
@@ -276,11 +277,22 @@
                 </StackPanel>
                 <TextBlock Grid.Column="2" FontFamily="{StaticResource IconFont}" FontSize="11"
                            Text="{Binding Badge}" Foreground="{Binding BadgeBrush}"
-                           VerticalAlignment="Center" HorizontalAlignment="Center"/>
+                           Margin="4,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Style.Triggers>
+                                <!-- バッジ無しの行は Margin ごと畳んで幅を空ける -->
+                                <DataTrigger Binding="{Binding Badge}" Value="">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
                 <TextBlock Grid.Column="3" FontFamily="{StaticResource IconFont}" FontSize="9"
                            Text="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
                            Visibility="{Binding ChevronVisibility}"
-                           VerticalAlignment="Center" HorizontalAlignment="Right"/>
+                           Margin="4,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
         </DataTemplate>
 
@@ -456,10 +468,11 @@
             </Grid>
 
             <!-- ツールバー: 独立した浮遊カード -->
-            <Border DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}" Padding="7,7"
+            <Border x:Name="ToolbarCard" DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}" Padding="7,7"
                     Margin="6,4,6,4" CornerRadius="12"
                     BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
-                    Effect="{DynamicResource CardShadowBelow}">
+                    Effect="{DynamicResource CardShadowBelow}"
+                    SizeChanged="Toolbar_SizeChanged">
                 <DockPanel>
                     <Button DockPanel.Dock="Left" Style="{StaticResource ToolButton}" Content="&#xE72B;"
                             ToolTip="戻る (Alt+←)" IsEnabled="{Binding CanGoBack}" Click="Back_Click"/>
@@ -505,8 +518,13 @@
                         <ComboBoxItem Content="種類"/>
                     </ComboBox>
 
+                    <!-- 検索アイコン: ウィンドウが狭いときだけ表示 (クリックでボックス展開) -->
+                    <Button x:Name="SearchToggleButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
+                            Content="&#xE721;" Visibility="Collapsed"
+                            ToolTip="検索 (Ctrl+F)" Click="SearchToggle_Click"/>
+
                     <!-- 検索ボックス: 現在のフォルダー以下を名前で検索 (Enter で実行) -->
-                    <Border DockPanel.Dock="Right" Width="170" Height="32" Margin="2,0"
+                    <Border x:Name="SearchBorder" DockPanel.Dock="Right" Width="170" Height="32" Margin="2,0"
                             Background="{DynamicResource SurfaceBrush}"
                             BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
                             Effect="{DynamicResource SubtleShadow}">
@@ -517,9 +535,9 @@
                             <TextBox x:Name="SearchBox" BorderThickness="0" Background="Transparent"
                                      Foreground="{DynamicResource TextPrimaryBrush}"
                                      CaretBrush="{DynamicResource TextPrimaryBrush}"
-                                     VerticalContentAlignment="Center" Padding="26,0,6,0"
+                                     VerticalContentAlignment="Center" Padding="26,0,24,0"
                                      ToolTip="現在のフォルダー以下を検索 (Enter で実行 / Esc で閉じる。* ? のワイルドカード可)"
-                                     KeyDown="SearchBox_KeyDown"/>
+                                     KeyDown="SearchBox_KeyDown" LostKeyboardFocus="SearchBox_LostFocus"/>
                             <TextBlock Text="検索 (Ctrl+F)" IsHitTestVisible="False"
                                        Foreground="{DynamicResource TextTertiaryBrush}"
                                        VerticalAlignment="Center" Margin="28,0,0,0">
@@ -534,6 +552,24 @@
                                     </Style>
                                 </TextBlock.Style>
                             </TextBlock>
+                            <!-- 入力クリア (タブの閉じるボタンと同じ見た目) -->
+                            <Button Width="18" Height="18" Margin="0,0,5,0"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Background="Transparent" BorderThickness="0" Cursor="Hand"
+                                    FontFamily="{StaticResource IconFont}" FontSize="9" Content="&#xE711;"
+                                    Foreground="{DynamicResource TextSecondaryBrush}"
+                                    ToolTip="クリア" Click="SearchClear_Click">
+                                <Button.Style>
+                                    <Style TargetType="Button">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Button.Style>
+                            </Button>
                         </Grid>
                     </Border>
 
@@ -636,10 +672,40 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:ColumnModel}">
-                            <Border Width="216" BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="0,0,1,0"
-                                    Loaded="Column_Loaded">
+                            <Border Loaded="Column_Loaded">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Width" Value="216"/>
+                                        <Setter Property="BorderBrush" Value="{DynamicResource BorderSoftBrush}"/>
+                                        <Setter Property="BorderThickness" Value="0,0,1,0"/>
+                                        <Style.Triggers>
+                                            <!-- 検索結果列はファイル名と場所が読めるよう広めに -->
+                                            <DataTrigger Binding="{Binding IsSearch}" Value="True">
+                                                <Setter Property="Width" Value="300"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
                                 <Grid>
-                                    <ListBox ItemsSource="{Binding Items}"
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="*"/>
+                                    </Grid.RowDefinitions>
+                                    <!-- 検索結果列のヘッダー: この列が検索結果であることを示す -->
+                                    <Border Grid.Row="0" Visibility="{Binding IsSearch, Converter={StaticResource B2V}}"
+                                            Background="{DynamicResource AccentFocusBrush}" CornerRadius="8"
+                                            Margin="5,5,5,2" Padding="9,5">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Left" FontFamily="{StaticResource IconFont}" FontSize="12"
+                                                       Text="&#xE721;" Foreground="{DynamicResource AccentBrush}"
+                                                       VerticalAlignment="Center"/>
+                                            <TextBlock Margin="6,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
+                                                       Foreground="{DynamicResource TextPrimaryBrush}"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Text="{Binding SearchQuery, StringFormat='「{0}」の検索結果'}"/>
+                                        </DockPanel>
+                                    </Border>
+                                    <ListBox Grid.Row="1" ItemsSource="{Binding Items}"
                                              SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
                                              Background="Transparent"
                                              BorderThickness="0"
@@ -662,7 +728,7 @@
                                              Drop="Column_Drop"
                                              ItemTemplateSelector="{StaticResource ColumnItemSelector}">
                                     </ListBox>
-                                    <TextBlock Foreground="{DynamicResource TextTertiaryBrush}"
+                                    <TextBlock Grid.Row="1" Foreground="{DynamicResource TextTertiaryBrush}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
@@ -686,7 +752,7 @@
                                             </Style>
                                         </TextBlock.Style>
                                     </TextBlock>
-                                    <TextBlock Text="{Binding Error}" Margin="10" TextWrapping="Wrap"
+                                    <TextBlock Grid.Row="1" Text="{Binding Error}" Margin="10" TextWrapping="Wrap"
                                                Foreground="#FFC04040" VerticalAlignment="Top">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
