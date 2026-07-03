@@ -6,12 +6,13 @@
         Height="680" Width="1180"
         MinHeight="340" MinWidth="520"
         FontFamily="{DynamicResource {x:Static SystemFonts.MessageFontFamilyKey}}" FontSize="13"
-        WindowStyle="None"
         Background="{DynamicResource WindowBackgroundBrush}"
         StateChanged="Window_StateChanged"
         PreviewKeyDown="Window_PreviewKeyDown"
         PreviewMouseMove="Window_PreviewMouseMove">
 
+    <!-- WindowStyle は既定 (SingleBorderWindow) のまま WindowChrome で標準枠を消す。
+         WindowStyle=None にすると WS_CAPTION が外れ、DWM の最大化/最小化アニメーションが効かなくなる -->
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="40" ResizeBorderThickness="6" CornerRadius="10"
                       GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
@@ -385,7 +386,7 @@
         </Style>
     </Window.Resources>
 
-    <!-- ルート枠 (WindowStyle=None のため自前で薄い枠) -->
+    <!-- ルート枠 (WindowChrome で標準枠を消しているため自前で薄い枠) -->
     <Border x:Name="RootBorder" Background="{DynamicResource WindowBackgroundBrush}"
             BorderBrush="{DynamicResource WindowOuterBorderBrush}" BorderThickness="1" CornerRadius="10">
         <DockPanel x:Name="RootDock">

@@ -158,7 +158,7 @@ public partial class MainWindow : Window
         HwndSource.FromHwnd(hwnd)?.AddHook(ClipboardWndProc);
 
         // Win11 の DWM にウィンドウ自体を角丸にしてもらう
-        // (WindowStyle=None + 透過背景では四隅が黒く残るため)。Win10 では失敗しても無害
+        // (標準枠を消しているため四隅が黒く残らないように)。Win10 では失敗しても無害
         try
         {
             var pref = 2; // DWMWCP_ROUND
