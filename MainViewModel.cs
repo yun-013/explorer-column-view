@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.IO.Enumeration;
 
 namespace ColumnView;
 
@@ -483,7 +484,7 @@ public class MainViewModel : ObservableObject
         {
             foreach (var tab in Tabs)
             {
-                foreach (var column in tab.Columns.Where(c => c.Path is null))
+                foreach (var column in tab.Columns.Where(c => c is { Path: null, IsSearch: false }))
                 {
                     var selectedPath = column.SelectedItem?.Path;
                     await column.LoadAsync(ShowHidden, CurrentComparison);
@@ -497,6 +498,170 @@ public class MainViewModel : ObservableObject
         {
             _navigating = false;
         }
+    }
+
+    // ---- 検索 (現在のフォルダー以下をその場で走査) ----
+
+    /// <summary>結果の上限。インデックスを持たない走査型なので、際限なく集めない。</summary>
+    private const int MaxSearchResults = 500;
+
+    private CancellationTokenSource? _searchCts;
+
+    /// <summary>現在のフォルダー以下を名前で再帰検索し、結果を専用の列へ流し込む。
+    /// インデックスや常駐監視は持たず、Enter のたびにその場で走査する (キャンセル可・上限あり)。</summary>
+    public async Task SearchAsync(string query)
+    {
+        query = query.Trim();
+        if (ActiveTab is not { } tab || string.IsNullOrEmpty(query))
+            return;
+        if (FavoriteTarget is not { } scope)
+        {
+            StatusText = "検索できるフォルダーがありません";
+            return;
+        }
+
+        _searchCts?.Cancel();
+
+        // 検索起点を表示している列の右に結果列を出す (見つからなければ末尾に足す)
+        var index = -1;
+        for (var i = 0; i < tab.Columns.Count; i++)
+            if (string.Equals(tab.Columns[i].Path, scope, StringComparison.OrdinalIgnoreCase))
+                index = i;
+        TrimColumns(tab, index >= 0 ? index + 1 : tab.Columns.Count);
+
+        var column = ColumnModel.CreateSearch();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        column.SearchCts = cts; // 列が閉じられたら (ナビゲーション等) 走査も止まる
+        tab.Columns.Add(column);
+        CurrentPath = scope;
+        StatusText = $"検索中… ({scope})";
+
+        await RunSearchAsync(column, scope, query, ShowHidden, CurrentComparison, cts.Token);
+    }
+
+    /// <summary>実行中の検索を中断する (表示済みの結果は残す)。</summary>
+    public void CancelSearch() => _searchCts?.Cancel();
+
+    /// <summary>検索結果の列を閉じる (Esc)。</summary>
+    public void CloseSearch()
+    {
+        _searchCts?.Cancel();
+        if (ActiveTab is not { } tab)
+            return;
+        for (var i = tab.Columns.Count - 1; i >= 0; i--)
+        {
+            if (!tab.Columns[i].IsSearch)
+                continue;
+            var column = tab.Columns[i];
+            tab.Columns.RemoveAt(i);
+            column.Dispose();
+        }
+    }
+
+    private async Task RunSearchAsync(ColumnModel column, string scope, string query,
+        bool showHidden, Comparison<FileSystemItem> comparison, CancellationToken ct)
+    {
+        var dispatcher = System.Windows.Application.Current.Dispatcher;
+        var found = new List<FileSystemItem>();
+        var capped = false;
+
+        // 走査スレッドから随時呼ぶ: ソート済みの写しを作って UI スレッドへまとめて反映
+        // (1 件ずつ通知するとレイアウト評価が件数ぶん走って重いため)
+        void Flush(bool done)
+        {
+            var dirs = found.Where(i => i.IsDirectory).ToList();
+            var files = found.Where(i => !i.IsDirectory).ToList();
+            dirs.Sort(comparison);
+            files.Sort(comparison);
+            dirs.AddRange(files);
+            var count = found.Count;
+            dispatcher.BeginInvoke(() =>
+            {
+                if (ct.IsCancellationRequested)
+                    return;
+                column.Items.ReplaceAll(dirs);
+                StatusText = done
+                    ? capped ? $"検索結果: {count} 件 (上限 {MaxSearchResults} 件で打ち切り)" : $"検索結果: {count} 件"
+                    : $"検索中… {count} 件";
+            });
+        }
+
+        // * ? を含むならワイルドカード一致、含まなければ部分一致
+        Func<string, bool> matches = query.IndexOfAny(new[] { '*', '?' }) >= 0
+            ? name => FileSystemName.MatchesSimpleExpression(query, name, ignoreCase: true)
+            : name => name.Contains(query, StringComparison.OrdinalIgnoreCase);
+
+        column.IsSearchRunning = true;
+        try
+        {
+            await Task.Run(() =>
+            {
+                var sw = Stopwatch.StartNew();
+                // 幅優先: 浅い階層 (現在地に近い結果) から先に出す
+                var queue = new Queue<string>();
+                queue.Enqueue(scope);
+                while (queue.Count > 0 && !capped)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    DirectoryInfo dir;
+                    try
+                    {
+                        dir = new DirectoryInfo(queue.Dequeue());
+                        foreach (var info in dir.EnumerateFileSystemInfos())
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            var attrs = info.Attributes;
+                            if (!showHidden && (attrs & (FileAttributes.Hidden | FileAttributes.System)) != 0)
+                                continue;
+                            var isDir = (attrs & FileAttributes.Directory) != 0;
+                            // ジャンクション / シンボリックリンクは無限ループ回避のため辿らない
+                            if (isDir && (attrs & FileAttributes.ReparsePoint) == 0)
+                                queue.Enqueue(info.FullName);
+                            if (!matches(info.Name))
+                                continue;
+
+                            var parent = Path.GetDirectoryName(info.FullName);
+                            found.Add(new FileSystemItem
+                            {
+                                Path = info.FullName,
+                                Name = info.Name,
+                                IsDirectory = isDir,
+                                Cloud = FileSystemItem.GetCloudStatus(attrs),
+                                Modified = info.LastWriteTime,
+                                Size = isDir ? 0 : (info as FileInfo)?.Length ?? 0,
+                                Location = parent is not null
+                                    && !string.Equals(parent, scope, StringComparison.OrdinalIgnoreCase)
+                                    ? Path.GetRelativePath(scope, parent) : null,
+                            });
+                            if (found.Count >= MaxSearchResults)
+                            {
+                                capped = true;
+                                break;
+                            }
+                            if (sw.ElapsedMilliseconds >= 150)
+                            {
+                                Flush(done: false);
+                                sw.Restart();
+                            }
+                        }
+                    }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+                    {
+                        // アクセスできないフォルダーは無視して続行
+                    }
+                }
+            }, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        finally
+        {
+            column.IsSearchRunning = false;
+        }
+        Flush(done: true);
     }
 
     // ---- タブ・ナビゲーション ----

@@ -239,6 +239,11 @@
                        Source="{Binding Icon}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
+                    <!-- 検索結果: 検索起点から見た場所 (サブフォルダー) を小さく添える -->
+                    <TextBlock Text="{Binding Location}" FontSize="10.5"
+                               Foreground="{DynamicResource TextSecondaryBrush}"
+                               TextTrimming="CharacterEllipsis" Margin="0,1,0,0"
+                               Visibility="{Binding LocationVisibility}"/>
                     <!-- ドライブの容量ゲージ (残量わずかで赤) -->
                     <ProgressBar Height="3" Margin="0,3,6,0" Minimum="0" Maximum="1"
                                  Value="{Binding DriveUsedRatio, Mode=OneWay}"
@@ -500,6 +505,38 @@
                         <ComboBoxItem Content="種類"/>
                     </ComboBox>
 
+                    <!-- 検索ボックス: 現在のフォルダー以下を名前で検索 (Enter で実行) -->
+                    <Border DockPanel.Dock="Right" Width="170" Height="32" Margin="2,0"
+                            Background="{DynamicResource SurfaceBrush}"
+                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
+                            Effect="{DynamicResource SubtleShadow}">
+                        <Grid>
+                            <TextBlock FontFamily="{StaticResource IconFont}" FontSize="12" Text="&#xE721;"
+                                       Foreground="{DynamicResource TextSecondaryBrush}"
+                                       VerticalAlignment="Center" Margin="9,0,0,0"/>
+                            <TextBox x:Name="SearchBox" BorderThickness="0" Background="Transparent"
+                                     Foreground="{DynamicResource TextPrimaryBrush}"
+                                     CaretBrush="{DynamicResource TextPrimaryBrush}"
+                                     VerticalContentAlignment="Center" Padding="26,0,6,0"
+                                     ToolTip="現在のフォルダー以下を検索 (Enter で実行 / Esc で閉じる。* ? のワイルドカード可)"
+                                     KeyDown="SearchBox_KeyDown"/>
+                            <TextBlock Text="検索 (Ctrl+F)" IsHitTestVisible="False"
+                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                       VerticalAlignment="Center" Margin="28,0,0,0">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value="">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </Grid>
+                    </Border>
+
                     <!-- アドレスバー: カードの上にさらに浮かぶ入力欄 (二重シャドウ) -->
                     <Border x:Name="AddressBar" Margin="6,0" Height="32" Background="{DynamicResource SurfaceBrush}"
                             BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
@@ -625,11 +662,11 @@
                                              Drop="Column_Drop"
                                              ItemTemplateSelector="{StaticResource ColumnItemSelector}">
                                     </ListBox>
-                                    <TextBlock Text="このフォルダーは空です"
-                                               Foreground="{DynamicResource TextTertiaryBrush}"
+                                    <TextBlock Foreground="{DynamicResource TextTertiaryBrush}"
                                                HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
+                                                <Setter Property="Text" Value="このフォルダーは空です"/>
                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                 <Style.Triggers>
                                                     <MultiDataTrigger>
@@ -639,6 +676,12 @@
                                                         </MultiDataTrigger.Conditions>
                                                         <Setter Property="Visibility" Value="Visible"/>
                                                     </MultiDataTrigger>
+                                                    <DataTrigger Binding="{Binding IsSearch}" Value="True">
+                                                        <Setter Property="Text" Value="一致する項目はありません"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding IsSearchRunning}" Value="True">
+                                                        <Setter Property="Text" Value="検索中…"/>
+                                                    </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>
                                         </TextBlock.Style>

@@ -915,6 +915,13 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
 
+            case Key.Escape when _vm.ActiveTab?.Columns.Any(c => c.IsSearch) == true:
+                // 検索結果の列を閉じて一覧へ戻る
+                _vm.CloseSearch();
+                FocusColumn((_vm.ActiveTab?.Columns.Count ?? 1) - 1, selectFirst: false);
+                e.Handled = true;
+                break;
+
             case Key.F2 when selected is { UseRealIcon: false, IsGroupEntry: false }:
                 e.Handled = true;
                 if (PromptText("名前の変更", "新しい名前:", selected.Name, selectStem: !selected.IsDirectory) is { } newName)
@@ -1395,6 +1402,33 @@ public partial class MainWindow : Window
     private void PathBox_LostFocus(object sender, RoutedEventArgs e)
         => _vm.IsEditingAddress = false;
 
+    // ---- 検索 ----
+
+    private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await _vm.SearchAsync(SearchBox.Text);
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            if (SearchBox.Text.Length > 0)
+            {
+                // 1 回目の Esc: 入力を消して実行中の検索を止める (結果列は残す)
+                SearchBox.Clear();
+                _vm.CancelSearch();
+            }
+            else
+            {
+                // 2 回目の Esc: 結果列を閉じて一覧へ戻る
+                _vm.CloseSearch();
+                FocusColumn((_vm.ActiveTab?.Columns.Count ?? 1) - 1, selectFirst: false);
+            }
+        }
+    }
+
     // ---- ウィンドウ全体のショートカット ----
 
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -1466,6 +1500,11 @@ public partial class MainWindow : Window
                 break;
             case Key.L:
                 BeginAddressEdit();
+                e.Handled = true;
+                break;
+            case Key.F:
+                SearchBox.Focus();
+                SearchBox.SelectAll();
                 e.Handled = true;
                 break;
             case Key.V:

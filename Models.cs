@@ -94,6 +94,10 @@ public class FileSystemItem : ObservableObject
     /// <summary>ホーム列のお気に入り項目 (★バッジ表示)</summary>
     public bool IsFavoriteEntry { get; init; }
 
+    /// <summary>検索結果でのみ表示する、検索起点から見た親フォルダーの相対パス。</summary>
+    public string? Location { get; init; }
+    public Visibility LocationVisibility => Location is null ? Visibility.Collapsed : Visibility.Visible;
+
     // ---- タブグループ ----
 
     /// <summary>グループ見出し行。クリックで中身を次の列に展開する。</summary>
@@ -339,11 +343,24 @@ public abstract class ObservableObject : INotifyPropertyChanged
 
 public class ColumnModel : ObservableObject, IDisposable
 {
-    /// <summary>フォルダー列のパス。ホーム列・グループ列では null。</summary>
+    /// <summary>フォルダー列のパス。ホーム列・グループ列・検索列では null。</summary>
     public string? Path { get; }
 
     /// <summary>非 null のとき、この列はグループの中身 (サブグループ＋フォルダー) を表す。</summary>
     public string? GroupId { get; }
+
+    /// <summary>検索結果の列。中身は検索側から流し込まれ、LoadAsync では作り直さない。</summary>
+    public bool IsSearch { get; }
+
+    /// <summary>実行中の検索。列が閉じられたら Dispose で確実に止める。</summary>
+    public CancellationTokenSource? SearchCts { get; set; }
+
+    private bool _isSearchRunning;
+    public bool IsSearchRunning
+    {
+        get => _isSearchRunning;
+        set => Set(ref _isSearchRunning, value);
+    }
 
     public RangeObservableCollection<FileSystemItem> Items { get; } = new();
 
@@ -367,8 +384,15 @@ public class ColumnModel : ObservableObject, IDisposable
     /// <summary>グループの中身を表す列。</summary>
     public ColumnModel(FavoriteGroup group) => GroupId = group.Id;
 
+    private ColumnModel(bool isSearch) => IsSearch = isSearch;
+
+    /// <summary>検索結果を表示する列を作る。</summary>
+    public static ColumnModel CreateSearch() => new(isSearch: true);
+
     public async Task LoadAsync(bool showHidden, Comparison<FileSystemItem> comparison)
     {
+        if (IsSearch)
+            return; // 検索結果は再現できないため再読み込みしない (結果は検索側が管理)
         Error = null;
         List<FileSystemItem> items;
         if (GroupId is not null)
@@ -490,7 +514,7 @@ public class ColumnModel : ObservableObject, IDisposable
         }
     }
 
-    /// <summary>列が閉じられたら監視とアイコン読み込みを確実に止める。</summary>
+    /// <summary>列が閉じられたら監視・アイコン読み込み・検索を確実に止める。</summary>
     public void Dispose()
     {
         _watcher?.Dispose();
@@ -498,6 +522,7 @@ public class ColumnModel : ObservableObject, IDisposable
         _fsTimer?.Stop();
         _fsTimer = null;
         _iconCts?.Cancel();
+        SearchCts?.Cancel();
     }
 
     /// <summary>表示中ファイルの実アイコンをバックグラウンドで読み込み、順次差し替える。</summary>
@@ -526,7 +551,7 @@ public class ColumnModel : ObservableObject, IDisposable
     /// <summary>読み込み済みの項目を並べ替え直す (フォルダ優先は維持)。選択は保持する。</summary>
     public void ApplySort(Comparison<FileSystemItem> comparison)
     {
-        if (Path is null || Items.Count == 0)
+        if ((Path is null && !IsSearch) || Items.Count == 0)
             return;
 
         var selected = SelectedItem;
