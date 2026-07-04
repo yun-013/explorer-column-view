@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace ColumnView;
 
@@ -1422,20 +1423,76 @@ public partial class MainWindow : Window
         ApplySearchVisibility();
     }
 
+    /// <summary>検索ボックスの展開幅 (XAML の SearchBorder.Width と一致させる)。</summary>
+    private const double SearchBoxWidth = 170;
+
+    private bool ShouldShowBox => !_searchCompact || _searchExpanded || SearchBox.Text.Length > 0;
+
+    /// <summary>リサイズ由来など、アニメーションなしで即座に表示状態を合わせる。</summary>
     private void ApplySearchVisibility()
     {
-        // 狭くても、開いている最中・入力が残っている間はボックスを見せ続ける
-        var showBox = !_searchCompact || _searchExpanded || SearchBox.Text.Length > 0;
+        var showBox = ShouldShowBox;
+        SearchBorder.BeginAnimation(WidthProperty, null); // 実行中のアニメを解除
+        SearchBorder.Width = SearchBoxWidth;
         SearchBorder.Visibility = showBox ? Visibility.Visible : Visibility.Collapsed;
         SearchToggleButton.Visibility = showBox ? Visibility.Collapsed : Visibility.Visible;
     }
 
+    /// <summary>アイコン → ボックスへ横に伸びる (幅 0 → 170)。</summary>
+    private void OpenSearchAnimated()
+    {
+        SearchToggleButton.Visibility = Visibility.Collapsed;
+        SearchBorder.Visibility = Visibility.Visible;
+        var anim = new DoubleAnimation(0, SearchBoxWidth, TimeSpan.FromMilliseconds(150))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        anim.Completed += (_, _) =>
+        {
+            // アニメを解除して通常のレイアウト幅に戻す
+            SearchBorder.BeginAnimation(WidthProperty, null);
+            SearchBorder.Width = SearchBoxWidth;
+        };
+        SearchBorder.BeginAnimation(WidthProperty, anim);
+    }
+
+    /// <summary>ボックス → アイコンへ横に縮む (幅 170 → 0)。</summary>
+    private void CloseSearchAnimated()
+    {
+        var anim = new DoubleAnimation(SearchBorder.ActualWidth, 0, TimeSpan.FromMilliseconds(130))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+        };
+        anim.Completed += (_, _) =>
+        {
+            SearchBorder.BeginAnimation(WidthProperty, null);
+            SearchBorder.Width = SearchBoxWidth;
+            SearchBorder.Visibility = Visibility.Collapsed;
+            SearchToggleButton.Visibility = Visibility.Visible;
+        };
+        SearchBorder.BeginAnimation(WidthProperty, anim);
+    }
+
     private void ExpandSearchBox()
     {
+        var wasHidden = _searchCompact && SearchBorder.Visibility != Visibility.Visible;
         _searchExpanded = true;
-        ApplySearchVisibility();
+        if (wasHidden)
+            OpenSearchAnimated();
+        else
+            ApplySearchVisibility();
         SearchBox.Focus();
         SearchBox.SelectAll();
+    }
+
+    /// <summary>ボックスをアイコンへ畳む (畳むべき状態でなければ何もしない)。</summary>
+    private void CollapseSearchBox()
+    {
+        _searchExpanded = false;
+        if (_searchCompact && !ShouldShowBox && SearchBorder.Visibility == Visibility.Visible)
+            CloseSearchAnimated();
+        else
+            ApplySearchVisibility();
     }
 
     private void SearchToggle_Click(object sender, RoutedEventArgs e) => ExpandSearchBox();
@@ -1451,10 +1508,7 @@ public partial class MainWindow : Window
     {
         // 空のままフォーカスが外れたらアイコンに戻す (入力が残っていれば出したまま)
         if (SearchBox.Text.Length == 0)
-        {
-            _searchExpanded = false;
-            ApplySearchVisibility();
-        }
+            CollapseSearchBox();
     }
 
     private async void SearchBox_KeyDown(object sender, KeyEventArgs e)

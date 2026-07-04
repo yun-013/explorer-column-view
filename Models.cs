@@ -98,6 +98,9 @@ public class FileSystemItem : ObservableObject
     public string? Location { get; init; }
     public Visibility LocationVisibility => Location is null ? Visibility.Collapsed : Visibility.Visible;
 
+    /// <summary>ツールチップの「場所」(親フォルダーのフルパス)。検索結果のみ表示。</summary>
+    public string ParentPath => System.IO.Path.GetDirectoryName(Path) ?? "";
+
     // ---- タブグループ ----
 
     /// <summary>グループ見出し行。クリックで中身を次の列に展開する。</summary>
@@ -304,7 +307,7 @@ public class FileSystemItem : ObservableObject
         return CloudStatus.None;
     }
 
-    public static Comparison<FileSystemItem> BuildComparison(SortKey key, bool descending)
+    public static Comparison<FileSystemItem> BuildComparison(SortKey key, bool descending, bool foldersFirst)
     {
         Comparison<FileSystemItem> cmp = key switch
         {
@@ -317,7 +320,11 @@ public class FileSystemItem : ObservableObject
             },
             _ => (a, b) => NaturalSort.Compare(a.Name, b.Name),
         };
-        return descending ? (a, b) => cmp(b, a) : cmp;
+        var ordered = descending ? (a, b) => cmp(b, a) : cmp;
+        if (!foldersFirst)
+            return ordered;
+        // フォルダー優先は昇順 / 降順に関わらず常に先頭
+        return (a, b) => a.IsDirectory != b.IsDirectory ? (a.IsDirectory ? -1 : 1) : ordered(a, b);
     }
 
     private static string ExtensionOf(FileSystemItem item)
@@ -506,7 +513,7 @@ public class ColumnModel : ObservableObject, IDisposable
             var settings = AppSettings.Current;
             var selectedPath = SelectedItem?.Path;
             await LoadAsync(settings.ShowHidden,
-                FileSystemItem.BuildComparison(settings.SortKey, settings.SortDescending));
+                FileSystemItem.BuildComparison(settings.SortKey, settings.SortDescending, settings.FoldersFirst));
             if (selectedPath is not null)
                 SelectedItem = Items.FirstOrDefault(
                     i => string.Equals(i.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
@@ -558,20 +565,17 @@ public class ColumnModel : ObservableObject, IDisposable
             return;
 
         var selected = SelectedItem;
-        var dirs = Items.Where(i => i.IsDirectory).ToList();
-        var files = Items.Where(i => !i.IsDirectory).ToList();
-        dirs.Sort(comparison);
-        files.Sort(comparison);
+        var items = Items.ToList();
+        items.Sort(comparison);
 
-        Items.ReplaceAll(dirs.Concat(files));
+        Items.ReplaceAll(items);
         SelectedItem = selected;
     }
 
     private static List<FileSystemItem> Enumerate(string path, bool showHidden, Comparison<FileSystemItem> comparison)
     {
         var dir = new DirectoryInfo(path);
-        var dirs = new List<FileSystemItem>();
-        var files = new List<FileSystemItem>();
+        var items = new List<FileSystemItem>();
 
         foreach (var info in dir.EnumerateFileSystemInfos())
         {
@@ -580,7 +584,7 @@ public class ColumnModel : ObservableObject, IDisposable
                 continue;
 
             var isDir = (attrs & FileAttributes.Directory) != 0;
-            var item = new FileSystemItem
+            items.Add(new FileSystemItem
             {
                 Path = info.FullName,
                 Name = info.Name,
@@ -588,14 +592,11 @@ public class ColumnModel : ObservableObject, IDisposable
                 Cloud = FileSystemItem.GetCloudStatus(attrs),
                 Modified = info.LastWriteTime,
                 Size = isDir ? 0 : (info as FileInfo)?.Length ?? 0,
-            };
-            (isDir ? dirs : files).Add(item);
+            });
         }
 
-        dirs.Sort(comparison);
-        files.Sort(comparison);
-        dirs.AddRange(files);
-        return dirs;
+        items.Sort(comparison);
+        return items;
     }
 
     /// <summary>グループの中身 (サブグループ＋フォルダー) を統一並び順で 1 列ぶんの項目として組み立てる。</summary>

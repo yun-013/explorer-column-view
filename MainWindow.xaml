@@ -191,6 +191,7 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid.Resources>
                                 <Style TargetType="TextBlock" x:Key="Label">
@@ -206,16 +207,22 @@
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="名前" Style="{StaticResource Label}"/>
                             <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding Name}" Style="{StaticResource Value}"/>
 
-                            <TextBlock Grid.Row="1" Grid.Column="0" Text="種類" Style="{StaticResource Label}"
+                            <!-- 場所 (フルパス): 検索結果のみ。省略された場所をホバーで確認できる -->
+                            <TextBlock Grid.Row="1" Grid.Column="0" Text="場所" Style="{StaticResource Label}"
+                                       Visibility="{Binding LocationVisibility}"/>
+                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ParentPath}" Style="{StaticResource Value}"
+                                       Visibility="{Binding LocationVisibility}"/>
+
+                            <TextBlock Grid.Row="2" Grid.Column="0" Text="種類" Style="{StaticResource Label}"
                                        Visibility="{Binding TypeRowVisibility}"/>
-                            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource Value}"
+                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource Value}"
                                        Visibility="{Binding TypeRowVisibility}"/>
 
-                            <TextBlock Grid.Row="2" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"/>
-                            <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"/>
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
-                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
                         </Grid>
                     </ToolTip>
                 </Grid.ToolTip>
@@ -509,7 +516,10 @@
                             </TextBlock>
                         </Button.Content>
                     </Button>
-                    <ComboBox DockPanel.Dock="Right" Width="92" Height="30" Margin="2,0"
+                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE8B7;"
+                                  ToolTip="フォルダーを先頭にまとめる (オフ = ファイルと同列に並べる)"
+                                  IsChecked="{Binding FoldersFirst}"/>
+                    <ComboBox DockPanel.Dock="Right" Width="82" Height="28" Margin="2,0" FontSize="12"
                               Style="{StaticResource SortComboBox}" ToolTip="並べ替えの基準"
                               SelectedIndex="{Binding SortKeyIndex}">
                         <ComboBoxItem Content="名前"/>

@@ -219,8 +219,23 @@ public class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>フォルダーを先頭にまとめるか (false = フォルダーとファイルを同列に並べる)。</summary>
+    public bool FoldersFirst
+    {
+        get => _settings.FoldersFirst;
+        set
+        {
+            if (_settings.FoldersFirst == value)
+                return;
+            _settings.FoldersFirst = value;
+            _settings.Save();
+            Raise();
+            ResortAll();
+        }
+    }
+
     private Comparison<FileSystemItem> CurrentComparison
-        => FileSystemItem.BuildComparison(_settings.SortKey, _settings.SortDescending);
+        => FileSystemItem.BuildComparison(_settings.SortKey, _settings.SortDescending, _settings.FoldersFirst);
 
     private void ResortAll()
     {
@@ -570,17 +585,14 @@ public class MainViewModel : ObservableObject
         // (1 件ずつ通知するとレイアウト評価が件数ぶん走って重いため)
         void Flush(bool done)
         {
-            var dirs = found.Where(i => i.IsDirectory).ToList();
-            var files = found.Where(i => !i.IsDirectory).ToList();
-            dirs.Sort(comparison);
-            files.Sort(comparison);
-            dirs.AddRange(files);
+            var snapshot = found.ToList();
+            snapshot.Sort(comparison);
             var count = found.Count;
             dispatcher.BeginInvoke(() =>
             {
                 if (ct.IsCancellationRequested)
                     return;
-                column.Items.ReplaceAll(dirs);
+                column.Items.ReplaceAll(snapshot);
                 StatusText = done
                     ? capped ? $"検索結果: {count} 件 (上限 {MaxSearchResults} 件で打ち切り)" : $"検索結果: {count} 件"
                     : $"検索中… {count} 件";
@@ -848,7 +860,10 @@ public class MainViewModel : ObservableObject
         else
         {
             tab.Title = TrimTitle(Path.GetFileName(Path.GetDirectoryName(item.Path)) ?? item.Name);
-            StatusText = $"{item.Name}  ({FormatSize(item.Size)})";
+            // 検索結果はどこのファイルか分かるようフルパスを見せる
+            StatusText = column.IsSearch
+                ? $"{item.Path}  ({FormatSize(item.Size)})"
+                : $"{item.Name}  ({FormatSize(item.Size)})";
         }
 
         // Seer のプレビューが開いていれば選択に追従させる (Files と同じ方式)

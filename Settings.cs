@@ -20,6 +20,10 @@ public class AppSettings
 {
     public SortKey SortKey { get; set; } = SortKey.Name;
     public bool SortDescending { get; set; } = true;
+
+    /// <summary>フォルダーを先頭にまとめるか (false = フォルダーとファイルを同列に並べる)。</summary>
+    public bool FoldersFirst { get; set; }
+
     public bool ShowHidden { get; set; }
     public List<string> Favorites { get; set; } = new();
     public List<FavoriteGroup> Groups { get; set; } = new();
