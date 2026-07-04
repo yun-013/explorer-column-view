@@ -28,6 +28,46 @@ public partial class MainWindow : Window
 
         // タブの増減・並べ替えで区切り線の表示状態を追従させる
         _vm.Tabs.CollectionChanged += (_, _) => ScheduleTabSeparatorUpdate();
+
+        // Quick Look が開いている間、選択を変えるとプレビューを追従させる
+        _vm.PreviewFollow = FollowQuickLook;
+    }
+
+    // ---- Quick Look プレビュー (スペースキー) ----
+
+    private QuickLookWindow? _quickLook;
+
+    /// <summary>スペースキー: プレビューを開く / 同じ項目なら閉じる。</summary>
+    private void ToggleQuickLook(FileSystemItem? item)
+    {
+        if (item is null || item.IsGroupEntry)
+            return;
+        if (_quickLook is { IsVisible: true } ql && ql.CurrentPath == item.Path)
+        {
+            ql.CloseQuickLook();
+            return;
+        }
+        _quickLook ??= new QuickLookWindow { Owner = this };
+        _quickLook.ShowFor(item, this);
+    }
+
+    /// <summary>選択変更に追従してプレビューの中身だけ差し替える (開いているときのみ)。</summary>
+    private void FollowQuickLook(FileSystemItem item)
+    {
+        if (item.IsGroupEntry)
+            return;
+        if (_quickLook is { IsVisible: true })
+            _quickLook.ShowFor(item, this);
+    }
+
+    private bool CloseQuickLookIfOpen()
+    {
+        if (_quickLook is { IsVisible: true } ql)
+        {
+            ql.CloseQuickLook();
+            return true;
+        }
+        return false;
     }
 
     // ---- タブ列の見た目 (区切り線) と横スクロール ----
@@ -568,6 +608,8 @@ public partial class MainWindow : Window
     /// <summary>ドラッグ中に閉じられても、死んだウィンドウを掴み続けないよう追従/監視を後始末する。</summary>
     protected override void OnClosed(EventArgs e)
     {
+        _quickLook?.Close();
+        _quickLook = null;
         if (new WindowInteropHelper(this).Handle is var hwnd && hwnd != 0)
             RemoveClipboardFormatListener(hwnd);
         CompositionTarget.Rendering -= DragTick;
@@ -786,11 +828,37 @@ public partial class MainWindow : Window
         var screen = lb.PointToScreen(e.GetPosition(lb));
         e.Handled = true;
 
-        var result = ShellContextMenu.Show(hwnd, targetPath, (int)screen.X, (int)screen.Y);
+        var cloudCapable = CloudSync.ProviderForPath(targetPath) is not null;
+        var result = ShellContextMenu.Show(hwnd, targetPath, (int)screen.X, (int)screen.Y, cloudCapable);
         var refreshDir = item is not null ? System.IO.Path.GetDirectoryName(item.Path) : column.Path;
 
         switch (result)
         {
+            case ShellMenuResult.MakeOffline:
+            case ShellMenuResult.MakeOnline:
+            {
+                var pinned = result == ShellMenuResult.MakeOffline;
+                var paths = SelectedFilePaths(lb);
+                if (paths.Count == 0)
+                    paths = new List<string> { targetPath };
+                _vm.StatusText = pinned ? "オフラインで保持しています…" : "オンラインのみに切り替えています…";
+                try
+                {
+                    await Task.Run(() =>
+                    {
+                        foreach (var p in paths)
+                            CloudSync.SetOffline(p, pinned);
+                    });
+                    _vm.StatusText = pinned ? "常にこのデバイスに保持しました" : "オンラインのみにしました (空き容量を確保)";
+                }
+                catch
+                {
+                    _vm.StatusText = "オフライン状態を切り替えられませんでした";
+                }
+                if (refreshDir is not null)
+                    await _vm.RefreshColumnsAsync(new[] { refreshDir });
+                break;
+            }
             case ShellMenuResult.ShellInvoked when refreshDir is not null:
                 await _vm.RefreshColumnsAsync(new[] { refreshDir });
                 break;
@@ -907,6 +975,11 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
 
+            case Key.Escape when CloseQuickLookIfOpen():
+                // プレビューが開いていれば、まず閉じる
+                e.Handled = true;
+                break;
+
             case Key.Escape when !ClipboardMarks.IsEmpty:
                 // コピー / 切り取りを取り消す (エクスプローラーの Esc と同じ)
                 ClipboardOps.ClearAfterMove();
@@ -941,7 +1014,7 @@ public partial class MainWindow : Window
             }
 
             case Key.Space:
-                _vm.TogglePreview(selected);
+                ToggleQuickLook(selected);
                 e.Handled = true;
                 break;
 
@@ -981,11 +1054,15 @@ public partial class MainWindow : Window
 
     private async void Item_ToolTipOpening(object sender, ToolTipEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is not FileSystemItem { IsDirectory: true } item)
+        if ((sender as FrameworkElement)?.DataContext is not FileSystemItem item)
             return;
         _tooltipCts?.Cancel();
         _tooltipCts = new CancellationTokenSource();
-        await item.EnsureFolderSizeAsync(_tooltipCts.Token);
+        var token = _tooltipCts.Token;
+        if (item.IsDirectory)
+            await item.EnsureFolderSizeAsync(token);
+        else
+            await item.EnsureMetadataAsync(token);
     }
 
     private void Item_ToolTipClosing(object sender, ToolTipEventArgs e)

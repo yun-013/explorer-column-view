@@ -192,6 +192,8 @@
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
                             <Grid.Resources>
                                 <Style TargetType="TextBlock" x:Key="Label">
@@ -223,6 +225,18 @@
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
                             <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
+
+                            <!-- 寸法 (画像) / 長さ (動画・音声): ホバー時に取得 -->
+                            <TextBlock Grid.Row="5" Grid.Column="0" Text="{Binding MetaLabel}" Style="{StaticResource Label}"
+                                       Visibility="{Binding MetaRowVisibility}"/>
+                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding MetaValue}" Style="{StaticResource Value}"
+                                       Visibility="{Binding MetaRowVisibility}"/>
+
+                            <!-- クラウド同期プロバイダ -->
+                            <TextBlock Grid.Row="6" Grid.Column="0" Text="同期" Style="{StaticResource Label}"
+                                       Visibility="{Binding ProviderRowVisibility}"/>
+                            <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding ProviderName}" Style="{StaticResource Value}"
+                                       Visibility="{Binding ProviderRowVisibility}"/>
                         </Grid>
                     </ToolTip>
                 </Grid.ToolTip>
@@ -237,14 +251,15 @@
                     </Style>
                 </Grid.Style>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="22"/>
+                    <ColumnDefinition Width="30"/>
                     <ColumnDefinition Width="*"/>
                     <!-- バッジ / シェブロンは Auto: 無い行では名前の表示幅に回す -->
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Image Grid.Column="0" Width="16" Height="16"
-                       Source="{Binding Icon}" VerticalAlignment="Center"/>
+                <Image Grid.Column="0" Width="24" Height="24"
+                       Source="{Binding Icon}" VerticalAlignment="Center"
+                       RenderOptions.BitmapScalingMode="HighQuality"/>
                 <StackPanel Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
                     <!-- 検索結果: 検索起点から見た場所 (サブフォルダー) を小さく添える -->
