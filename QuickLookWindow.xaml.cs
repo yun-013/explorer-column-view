@@ -133,7 +133,7 @@ public partial class QuickLookWindow : Window
         ImageView.Visibility = Visibility.Visible;
         double w = bmp.PixelWidth, h = bmp.PixelHeight;
         if (w <= 0 || h <= 0) { w = 640; h = 480; }
-        SizeToContent(w, h, owner);
+        FitToContent(w, h, owner);
     }
 
     private void ShowText(string path, string name, Window owner)
@@ -155,7 +155,7 @@ public partial class QuickLookWindow : Window
         }
         TextView.Text = text;
         TextScroll.Visibility = Visibility.Visible;
-        SizeToContent(760, 620, owner);
+        FitToContent(760, 620, owner);
     }
 
     private void ShowMedia(string path, Window owner, bool audio)
@@ -169,7 +169,7 @@ public partial class QuickLookWindow : Window
         if (audio)
             AudioName.Text = Path.GetFileName(path);
         MediaBar.Visibility = Visibility.Visible;
-        SizeToContent(audio ? 460 : 720, audio ? 300 : 460, owner);
+        FitToContent(audio ? 460 : 720, audio ? 300 : 460, owner);
         MediaView.Play();
         _isPlaying = true;
         PlayPause.Content = GlyphPause; // 一時停止中
@@ -190,12 +190,12 @@ public partial class QuickLookWindow : Window
         {
             w = img.Width; h = img.Height;
         }
-        SizeToContent(w, h, Application.Current.MainWindow ?? this);
+        FitToContent(w, h, Application.Current.MainWindow ?? this);
     }
 
     // ---- サイズ・配置 ----
 
-    private void SizeToContent(double contentW, double contentH, Window owner)
+    private void FitToContent(double contentW, double contentH, Window owner)
     {
         var area = SystemParameters.WorkArea;
         double maxW = area.Width * 0.82, maxH = area.Height * 0.82;
@@ -236,7 +236,7 @@ public partial class QuickLookWindow : Window
             Seek.Maximum = MediaView.NaturalDuration.TimeSpan.TotalSeconds;
         // 動画は実アスペクト比に合わせて開き直す
         if (MediaView.NaturalVideoWidth > 0 && MediaView.NaturalVideoHeight > 0)
-            SizeToContent(MediaView.NaturalVideoWidth, MediaView.NaturalVideoHeight,
+            FitToContent(MediaView.NaturalVideoWidth, MediaView.NaturalVideoHeight,
                 Application.Current.MainWindow ?? this);
         SyncSeek();
     }
