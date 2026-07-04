@@ -3,6 +3,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace ColumnView;
 
@@ -915,6 +916,13 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
 
+            case Key.Escape when _vm.ActiveTab?.Columns.Any(c => c.IsSearch) == true:
+                // 検索結果の列を閉じて一覧へ戻る
+                _vm.CloseSearch();
+                FocusColumn((_vm.ActiveTab?.Columns.Count ?? 1) - 1, selectFirst: false);
+                e.Handled = true;
+                break;
+
             case Key.F2 when selected is { UseRealIcon: false, IsGroupEntry: false }:
                 e.Handled = true;
                 if (PromptText("名前の変更", "新しい名前:", selected.Name, selectStem: !selected.IsDirectory) is { } newName)
@@ -1395,6 +1403,139 @@ public partial class MainWindow : Window
     private void PathBox_LostFocus(object sender, RoutedEventArgs e)
         => _vm.IsEditingAddress = false;
 
+    // ---- 検索 ----
+
+    /// <summary>ツールバーがこの幅を下回ったら検索ボックスをアイコンだけに畳む
+    /// (アドレスバーの表示幅を優先する)。</summary>
+    private const double SearchCompactThreshold = 800;
+
+    private bool _searchCompact;
+    private bool _searchExpanded;
+
+    private void Toolbar_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var compact = e.NewSize.Width < SearchCompactThreshold;
+        if (compact == _searchCompact)
+            return;
+        _searchCompact = compact;
+        if (!compact)
+            _searchExpanded = false;
+        ApplySearchVisibility();
+    }
+
+    /// <summary>検索ボックスの展開幅 (XAML の SearchBorder.Width と一致させる)。</summary>
+    private const double SearchBoxWidth = 170;
+
+    private bool ShouldShowBox => !_searchCompact || _searchExpanded || SearchBox.Text.Length > 0;
+
+    /// <summary>リサイズ由来など、アニメーションなしで即座に表示状態を合わせる。</summary>
+    private void ApplySearchVisibility()
+    {
+        var showBox = ShouldShowBox;
+        SearchBorder.BeginAnimation(WidthProperty, null); // 実行中のアニメを解除
+        SearchBorder.Width = SearchBoxWidth;
+        SearchBorder.Visibility = showBox ? Visibility.Visible : Visibility.Collapsed;
+        SearchToggleButton.Visibility = showBox ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>アイコン → ボックスへ横に伸びる (幅 0 → 170)。</summary>
+    private void OpenSearchAnimated()
+    {
+        SearchToggleButton.Visibility = Visibility.Collapsed;
+        SearchBorder.Visibility = Visibility.Visible;
+        var anim = new DoubleAnimation(0, SearchBoxWidth, TimeSpan.FromMilliseconds(150))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        anim.Completed += (_, _) =>
+        {
+            // アニメを解除して通常のレイアウト幅に戻す
+            SearchBorder.BeginAnimation(WidthProperty, null);
+            SearchBorder.Width = SearchBoxWidth;
+        };
+        SearchBorder.BeginAnimation(WidthProperty, anim);
+    }
+
+    /// <summary>ボックス → アイコンへ横に縮む (幅 170 → 0)。</summary>
+    private void CloseSearchAnimated()
+    {
+        var anim = new DoubleAnimation(SearchBorder.ActualWidth, 0, TimeSpan.FromMilliseconds(130))
+        {
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
+        };
+        anim.Completed += (_, _) =>
+        {
+            SearchBorder.BeginAnimation(WidthProperty, null);
+            SearchBorder.Width = SearchBoxWidth;
+            SearchBorder.Visibility = Visibility.Collapsed;
+            SearchToggleButton.Visibility = Visibility.Visible;
+        };
+        SearchBorder.BeginAnimation(WidthProperty, anim);
+    }
+
+    private void ExpandSearchBox()
+    {
+        var wasHidden = _searchCompact && SearchBorder.Visibility != Visibility.Visible;
+        _searchExpanded = true;
+        if (wasHidden)
+            OpenSearchAnimated();
+        else
+            ApplySearchVisibility();
+        SearchBox.Focus();
+        SearchBox.SelectAll();
+    }
+
+    /// <summary>ボックスをアイコンへ畳む (畳むべき状態でなければ何もしない)。</summary>
+    private void CollapseSearchBox()
+    {
+        _searchExpanded = false;
+        if (_searchCompact && !ShouldShowBox && SearchBorder.Visibility == Visibility.Visible)
+            CloseSearchAnimated();
+        else
+            ApplySearchVisibility();
+    }
+
+    private void SearchToggle_Click(object sender, RoutedEventArgs e) => ExpandSearchBox();
+
+    private void SearchClear_Click(object sender, RoutedEventArgs e)
+    {
+        SearchBox.Clear();
+        _vm.CancelSearch();
+        SearchBox.Focus();
+    }
+
+    private void SearchBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        // 空のままフォーカスが外れたらアイコンに戻す (入力が残っていれば出したまま)
+        if (SearchBox.Text.Length == 0)
+            CollapseSearchBox();
+    }
+
+    private async void SearchBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            await _vm.SearchAsync(SearchBox.Text);
+        }
+        else if (e.Key == Key.Escape)
+        {
+            e.Handled = true;
+            if (SearchBox.Text.Length > 0)
+            {
+                // 1 回目の Esc: 入力を消して実行中の検索を止める (結果列は残す)
+                SearchBox.Clear();
+                _vm.CancelSearch();
+            }
+            else
+            {
+                // 2 回目の Esc: 結果列を閉じて一覧へ戻る
+                _vm.CloseSearch();
+                FocusColumn((_vm.ActiveTab?.Columns.Count ?? 1) - 1, selectFirst: false);
+            }
+        }
+    }
+
     // ---- ウィンドウ全体のショートカット ----
 
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
@@ -1466,6 +1607,10 @@ public partial class MainWindow : Window
                 break;
             case Key.L:
                 BeginAddressEdit();
+                e.Handled = true;
+                break;
+            case Key.F:
+                ExpandSearchBox();
                 e.Handled = true;
                 break;
             case Key.V:
