@@ -28,12 +28,27 @@
                            Foreground="{DynamicResource TextPrimaryBrush}"/>
             </ScrollViewer>
 
+            <!-- Markdown (整形表示) -->
+            <FlowDocumentScrollViewer x:Name="DocView" Visibility="Collapsed"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Focusable="False"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+
+            <!-- PDF (ページを画像にレンダリングして縦に並べる) -->
+            <ScrollViewer x:Name="PdfScroll" Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Padding="10">
+                <StackPanel x:Name="PdfPages"/>
+            </ScrollViewer>
+
             <!-- 動画 / 音声 -->
             <MediaElement x:Name="MediaView" Visibility="Collapsed"
                           LoadedBehavior="Manual" UnloadedBehavior="Stop"
                           Stretch="Uniform" ScrubbingEnabled="True"
                           MediaOpened="MediaView_MediaOpened"
-                          MediaEnded="MediaView_MediaEnded"/>
+                          MediaEnded="MediaView_MediaEnded"
+                          MediaFailed="MediaView_MediaFailed"/>
 
             <!-- 音声のときの見出し (中身が真っ黒にならないように) -->
             <StackPanel x:Name="AudioGlyph" Visibility="Collapsed"

@@ -8,6 +8,9 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using Windows.Data.Pdf;
+using Windows.Storage;
+using Windows.Storage.Streams;
 
 namespace ColumnView;
 
@@ -21,7 +24,7 @@ public partial class QuickLookWindow : Window
 {
     private static readonly HashSet<string> TextExts = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".txt", ".log", ".md", ".markdown", ".json", ".xml", ".yaml", ".yml", ".ini", ".cfg", ".conf",
+        ".txt", ".log", ".json", ".xml", ".yaml", ".yml", ".ini", ".cfg", ".conf",
         ".cs", ".c", ".h", ".cpp", ".hpp", ".cc", ".java", ".kt", ".js", ".mjs", ".ts", ".tsx", ".jsx",
         ".py", ".rb", ".go", ".rs", ".php", ".swift", ".sh", ".bat", ".ps1", ".psm1", ".sql", ".r",
         ".html", ".htm", ".css", ".scss", ".less", ".vue", ".toml", ".csv", ".tsv", ".gitignore",
@@ -37,9 +40,12 @@ public partial class QuickLookWindow : Window
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
 
-    // Segoe MDL2 Assets: 再生 / 一時停止 (ソースを ASCII に保つため \u エスケープ)
-    private const string GlyphPlay = "";
-    private const string GlyphPause = "";
+    /// <summary>ウィンドウの上限 (作業領域に対する比率)。Quick Look らしい控えめなサイズ。</summary>
+    private const double MaxRatio = 0.62;
+
+    // Segoe MDL2 Assets: 再生 / 一時停止 (既存 Glyphs と同じく ConvertFromUtf32 で ASCII ソースを保つ)
+    private static readonly string GlyphPlay = char.ConvertFromUtf32(0xE768);
+    private static readonly string GlyphPause = char.ConvertFromUtf32(0xE769);
 
     private readonly DispatcherTimer _mediaTimer;
     private readonly DispatcherTimer _hideBarTimer;
@@ -90,7 +96,10 @@ public partial class QuickLookWindow : Window
             if (!item.IsDirectory && (AudioExts.Contains(ext) || ShellMetadata.IsMedia(item.Name)))
             {
                 ResetViews();
-                ShowMedia(path, owner, audio: AudioExts.Contains(ext));
+                bool audio = AudioExts.Contains(ext);
+                ShowMedia(path, owner, audio, gen);
+                if (!audio)
+                    return; // 動画は MediaOpened で実寸が分かってからサイズ確定・表示する
             }
             else if (!item.IsDirectory && ShellMetadata.IsImage(item.Name))
             {
@@ -104,26 +113,33 @@ public partial class QuickLookWindow : Window
                 if (w <= 0 || h <= 0) { w = 640; h = 480; }
                 FitToContent(w, h, owner);
             }
+            else if (!item.IsDirectory && string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                await ShowPdfAsync(path, gen, owner);
+            }
+            else if (!item.IsDirectory && (string.Equals(ext, ".md", StringComparison.OrdinalIgnoreCase)
+                                           || string.Equals(ext, ".markdown", StringComparison.OrdinalIgnoreCase)))
+            {
+                await ShowMarkdownAsync(path, gen, owner);
+            }
             else if (!item.IsDirectory && (TextExts.Contains(ext) || string.IsNullOrEmpty(ext)))
             {
                 var text = await Task.Run(() => ReadTextHead(path));
                 if (gen != _showGen)
                     return;
                 if (text is null)
-                {
-                    await ShowThumbnailAsync(path, gen, owner); // バイナリだった → サムネイルへ
-                }
+                    await ShowFallbackAsync(path, gen, owner); // バイナリだった
                 else
-                {
-                    ResetViews();
-                    TextView.Text = text;
-                    TextScroll.Visibility = Visibility.Visible;
-                    FitToContent(760, 620, owner);
-                }
+                    ShowTextContent(text, owner);
+            }
+            else if (item.IsDirectory)
+            {
+                await ShowThumbnailAsync(path, gen, owner);
             }
             else
             {
-                await ShowThumbnailAsync(path, gen, owner);
+                // 未知の拡張子: 本物のサムネイル → 中身がテキストならテキスト → アイコン
+                await ShowFallbackAsync(path, gen, owner);
             }
         }
         catch
@@ -145,8 +161,13 @@ public partial class QuickLookWindow : Window
         StopMedia();
         ImageView.Visibility = Visibility.Collapsed;
         ImageView.Source = null;
+        ImageView.Stretch = Stretch.Uniform;
         TextScroll.Visibility = Visibility.Collapsed;
         TextView.Text = "";
+        DocView.Visibility = Visibility.Collapsed;
+        DocView.Document = null;
+        PdfScroll.Visibility = Visibility.Collapsed;
+        PdfPages.Children.Clear();
         MediaView.Visibility = Visibility.Collapsed;
         AudioGlyph.Visibility = Visibility.Collapsed;
         MediaBar.Visibility = Visibility.Collapsed;
@@ -163,14 +184,14 @@ public partial class QuickLookWindow : Window
         bmp.CacheOption = BitmapCacheOption.OnLoad;
         bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
         bmp.UriSource = new Uri(path);
-        // 巨大画像でメモリを食い過ぎないよう、画面幅を上限にデコード
-        bmp.DecodePixelWidth = (int)Math.Min(SystemParameters.WorkArea.Width * 1.5, 2560);
+        // 巨大画像でメモリを食い過ぎないよう、表示上限に合わせてデコード
+        bmp.DecodePixelWidth = (int)Math.Min(SystemParameters.WorkArea.Width * MaxRatio * 1.5, 1920);
         bmp.EndInit();
         bmp.Freeze();
         return bmp;
     }
 
-    /// <summary>テキストの先頭を読む。バイナリらしければ null (サムネイル表示へ回す)。</summary>
+    /// <summary>テキストの先頭を読む。バイナリらしければ null (フォールバック表示へ回す)。</summary>
     private static string? ReadTextHead(string path)
     {
         string text;
@@ -188,26 +209,230 @@ public partial class QuickLookWindow : Window
         return text;
     }
 
-    private void ShowMedia(string path, Window owner, bool audio)
+    private void ShowTextContent(string text, Window owner)
+    {
+        ResetViews();
+        TextView.Text = text;
+        TextScroll.Visibility = Visibility.Visible;
+        FitToContent(640, 520, owner);
+    }
+
+    // ---- メディア (動画・音声) ----
+
+    private int _mediaShowGen;
+    private Window? _mediaOwner;
+    private bool _mediaAudio;
+
+    private void ShowMedia(string path, Window owner, bool audio, int gen)
     {
         _mediaMode = true;
+        _mediaShowGen = gen;
+        _mediaOwner = owner;
+        _mediaAudio = audio;
         MediaView.Source = new Uri(path);
         // 音声でも MediaElement は表示のまま (Collapsed だと再生されない)。
         // 映像の無い音声は AudioGlyph を上に重ねて見た目を整える。
         MediaView.Visibility = Visibility.Visible;
         AudioGlyph.Visibility = audio ? Visibility.Visible : Visibility.Collapsed;
         if (audio)
+        {
             AudioName.Text = Path.GetFileName(path);
-        MediaBar.Visibility = Visibility.Visible;
-        FitToContent(audio ? 460 : 720, audio ? 300 : 460, owner);
+            MediaBar.Visibility = Visibility.Visible;
+            FitToContent(420, 260, owner);
+            RevealBar();
+        }
+        // 動画はここではサイズを決めない。MediaOpened で実寸が分かってから
+        // サイズ確定→表示することで「小さく開いてから広がる」ガタつきを無くす
         MediaView.Play();
         _isPlaying = true;
-        PlayPause.Content = GlyphPause; // 一時停止中
+        PlayPause.Content = GlyphPause;
         _mediaTimer.Start();
-        RevealBar();
     }
 
-    /// <summary>シェルの大サムネイル (PDF・Office・フォルダー等のフォールバック) を非同期で表示。</summary>
+    private void MediaView_MediaOpened(object sender, RoutedEventArgs e)
+    {
+        if (_mediaShowGen != _showGen)
+            return;
+        if (MediaView.NaturalDuration.HasTimeSpan)
+            Seek.Maximum = MediaView.NaturalDuration.TimeSpan.TotalSeconds;
+        if (!_mediaAudio)
+        {
+            double w = MediaView.NaturalVideoWidth > 0 ? MediaView.NaturalVideoWidth : 720;
+            double h = MediaView.NaturalVideoHeight > 0 ? MediaView.NaturalVideoHeight : 420;
+            FitToContent(w, h, _mediaOwner ?? Application.Current.MainWindow ?? this);
+            MediaBar.Visibility = Visibility.Visible;
+            RevealBar();
+            if (!IsVisible)
+                Show();
+        }
+        SyncSeek();
+    }
+
+    private async void MediaView_MediaFailed(object sender, ExceptionRoutedEventArgs e)
+    {
+        // 再生できない形式はサムネイル / アイコンにフォールバック
+        if (_mediaShowGen != _showGen || CurrentPath is null)
+            return;
+        var owner = _mediaOwner ?? Application.Current.MainWindow ?? this;
+        try { await ShowFallbackAsync(CurrentPath, _showGen, owner); } catch { }
+        if (!IsVisible)
+            Show();
+    }
+
+    // ---- PDF (Windows 内蔵の PDF エンジンでページを実レンダリング) ----
+
+    private const int PdfMaxPages = 8;
+    private const uint PdfRenderWidth = 960;
+
+    private async Task ShowPdfAsync(string path, int gen, Window owner)
+    {
+        var file = await StorageFile.GetFileFromPathAsync(path);
+        var doc = await PdfDocument.LoadFromFileAsync(file);
+        if (gen != _showGen)
+            return;
+        if (doc.PageCount == 0)
+        {
+            await ShowFallbackAsync(path, gen, owner);
+            return;
+        }
+
+        int count = (int)Math.Min(doc.PageCount, PdfMaxPages);
+        for (int i = 0; i < count; i++)
+        {
+            BitmapImage img;
+            double pageW, pageH;
+            using (var page = doc.GetPage((uint)i))
+            {
+                pageW = page.Size.Width;
+                pageH = page.Size.Height;
+                img = await RenderPdfPageAsync(page);
+            }
+            if (gen != _showGen)
+                return;
+
+            if (i == 0)
+            {
+                // 1 ページ目が届いた時点で表示を切り替え、ウィンドウをページ比率に合わせる
+                ResetViews();
+                PdfScroll.Visibility = Visibility.Visible;
+                FitToContent(pageW, pageH * 1.02, owner);
+                if (!IsVisible)
+                    Show();
+            }
+            PdfPages.Children.Add(new Image
+            {
+                Source = img,
+                Stretch = Stretch.Uniform,
+                Margin = new Thickness(0, 0, 0, 10),
+            });
+        }
+
+        if (gen == _showGen && doc.PageCount > (uint)count)
+        {
+            PdfPages.Children.Add(new TextBlock
+            {
+                Text = $"… 全 {doc.PageCount} ページ中 {count} ページを表示",
+                Opacity = 0.6,
+                Margin = new Thickness(0, 2, 0, 8),
+                HorizontalAlignment = HorizontalAlignment.Center,
+            });
+        }
+    }
+
+    private static async Task<BitmapImage> RenderPdfPageAsync(PdfPage page)
+    {
+        using var ras = new InMemoryRandomAccessStream();
+        await page.RenderToStreamAsync(ras, new PdfPageRenderOptions { DestinationWidth = PdfRenderWidth });
+        ras.Seek(0);
+        var ms = new MemoryStream();
+        await ras.AsStreamForRead().CopyToAsync(ms);
+        return await Task.Run(() =>
+        {
+            ms.Position = 0;
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.StreamSource = ms;
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        });
+    }
+
+    // ---- Markdown (簡易レンダリング) ----
+
+    private async Task ShowMarkdownAsync(string path, int gen, Window owner)
+    {
+        var text = await Task.Run(() => ReadTextHead(path));
+        if (gen != _showGen)
+            return;
+        if (text is null)
+        {
+            await ShowFallbackAsync(path, gen, owner);
+            return;
+        }
+        try
+        {
+            var doc = MarkdownLite.Render(text);
+            ResetViews();
+            DocView.Document = doc;
+            DocView.Visibility = Visibility.Visible;
+            FitToContent(680, 560, owner);
+        }
+        catch
+        {
+            // 解析に失敗したら生テキストで見せる
+            ShowTextContent(text, owner);
+        }
+    }
+
+    // ---- フォールバック (未知の拡張子・バイナリ) ----
+
+    /// <summary>本物のサムネイル → 中身がテキストならテキスト → アイコン、の順で試す。</summary>
+    private async Task ShowFallbackAsync(string path, int gen, Window owner)
+    {
+        long stamp = 0;
+        try { stamp = new FileInfo(path).LastWriteTimeUtc.Ticks; } catch { }
+
+        // 1) サムネイルハンドラが本物の絵を出せる型 (SVG 等) はそれを表示
+        var thumb = await Task.Run(() =>
+            ShellThumbnail.Get(path, 1024, stamp, allowDownload: true, thumbnailOnly: true));
+        if (gen != _showGen)
+            return;
+        if (thumb is not null)
+        {
+            ResetViews();
+            ImageView.Source = thumb;
+            ImageView.Visibility = Visibility.Visible;
+            FitToContent(thumb.Width > 1 ? thumb.Width : 560,
+                         thumb.Height > 1 ? thumb.Height : 440, owner);
+            return;
+        }
+
+        // 2) 中身がテキストならテキスト表示 (.sub 等の未知のテキスト形式)
+        string? text = null;
+        try { text = await Task.Run(() => ReadTextHead(path)); } catch { }
+        if (gen != _showGen)
+            return;
+        if (text is not null)
+        {
+            ShowTextContent(text, owner);
+            return;
+        }
+
+        // 3) どうにもならないバイナリはアイコンを等倍で
+        var icon = await Task.Run(() =>
+            ShellThumbnail.Get(path, 256, stamp, allowDownload: true) ?? IconCache.GetByPath(path));
+        if (gen != _showGen)
+            return;
+        ResetViews();
+        ImageView.Source = icon;
+        ImageView.Stretch = Stretch.None;
+        ImageView.Visibility = Visibility.Visible;
+        FitToContent(400, 320, owner);
+    }
+
+    /// <summary>シェルのサムネイル or アイコン (フォルダー・例外時のフォールバック) を非同期で表示。</summary>
     private async Task ShowThumbnailAsync(string path, int gen, Window owner)
     {
         var img = await Task.Run(() =>
@@ -222,7 +447,7 @@ public partial class QuickLookWindow : Window
         ResetViews();
         ImageView.Source = img;
         ImageView.Visibility = Visibility.Visible;
-        double w = 720, h = 560;
+        double w = 560, h = 440;
         if (img is not null && img.Width > 1 && img.Height > 1)
         {
             w = img.Width; h = img.Height;
@@ -235,7 +460,7 @@ public partial class QuickLookWindow : Window
     private void FitToContent(double contentW, double contentH, Window owner)
     {
         var area = SystemParameters.WorkArea;
-        double maxW = area.Width * 0.82, maxH = area.Height * 0.82;
+        double maxW = area.Width * MaxRatio, maxH = area.Height * MaxRatio;
         double scale = Math.Min(1.0, Math.Min(maxW / contentW, maxH / contentH));
         double w = Math.Max(360, contentW * scale);
         double h = Math.Max(240, contentH * scale);
@@ -267,23 +492,12 @@ public partial class QuickLookWindow : Window
         _isPlaying = false;
     }
 
-    private void MediaView_MediaOpened(object sender, RoutedEventArgs e)
-    {
-        if (MediaView.NaturalDuration.HasTimeSpan)
-            Seek.Maximum = MediaView.NaturalDuration.TimeSpan.TotalSeconds;
-        // 動画は実アスペクト比に合わせて開き直す
-        if (MediaView.NaturalVideoWidth > 0 && MediaView.NaturalVideoHeight > 0)
-            FitToContent(MediaView.NaturalVideoWidth, MediaView.NaturalVideoHeight,
-                Application.Current.MainWindow ?? this);
-        SyncSeek();
-    }
-
     private void MediaView_MediaEnded(object sender, RoutedEventArgs e)
     {
         MediaView.Position = TimeSpan.Zero;
         MediaView.Pause();
         _isPlaying = false;
-        PlayPause.Content = GlyphPlay; // 停止/終了
+        PlayPause.Content = GlyphPlay;
     }
 
     private void PlayPause_Click(object sender, RoutedEventArgs e)

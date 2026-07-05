@@ -64,11 +64,12 @@ public static class ShellThumbnail
     /// <summary>
     /// 指定パスのサムネイルを取得する。取得できなければ null。
     /// <paramref name="allowDownload"/>=false のときはキャッシュ済みのみ (クラウド実体を取りに行かない)。
+    /// <paramref name="thumbnailOnly"/>=true のときは本物のサムネイルのみ (アイコンで代用しない)。
     /// </summary>
-    public static ImageSource? Get(string path, int size, long stamp, bool allowDownload)
+    public static ImageSource? Get(string path, int size, long stamp, bool allowDownload, bool thumbnailOnly = false)
     {
-        if (size > MaxCachedSize)
-            return Load(path, size, allowDownload);
+        if (size > MaxCachedSize || thumbnailOnly)
+            return Load(path, size, allowDownload, thumbnailOnly);
 
         var key = Key(path, stamp, size);
         lock (_lock)
@@ -77,7 +78,7 @@ public static class ShellThumbnail
                 return cached;
         }
 
-        var image = Load(path, size, allowDownload);
+        var image = Load(path, size, allowDownload, thumbnailOnly);
         lock (_lock)
         {
             if (_cache.Count >= MaxCacheEntries)
@@ -87,7 +88,7 @@ public static class ShellThumbnail
         return image;
     }
 
-    private static ImageSource? Load(string path, int size, bool allowDownload)
+    private static ImageSource? Load(string path, int size, bool allowDownload, bool thumbnailOnly)
     {
         try
         {
@@ -98,6 +99,8 @@ public static class ShellThumbnail
             var flags = SIIGBF.BiggerSizeOk;
             if (!allowDownload)
                 flags |= SIIGBF.InCacheOnly; // クラウド専用の実体ダウンロードを誘発しない
+            if (thumbnailOnly)
+                flags |= SIIGBF.ThumbnailOnly; // アイコンでの代用は失敗として返す
 
             var hr = factory.GetImage(new SIZE { cx = size, cy = size }, flags, out var hbitmap);
             Marshal.ReleaseComObject(factory);
