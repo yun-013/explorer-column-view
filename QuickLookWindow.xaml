@@ -9,7 +9,8 @@
     <!-- 影のための余白。中身だけを角丸で見せる (タイトルバー・枠は一切なし) -->
     <Border x:Name="Card" Margin="18" CornerRadius="12"
             Background="{DynamicResource SurfaceBrush}"
-            SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged">
+            SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged"
+            MouseLeftButtonDown="Card_MouseLeftButtonDown">
         <Border.Effect>
             <DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.32" Color="Black"/>
         </Border.Effect>

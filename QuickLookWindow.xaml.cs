@@ -40,8 +40,11 @@ public partial class QuickLookWindow : Window
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int WS_EX_TOOLWINDOW = 0x00000080;
 
-    /// <summary>ウィンドウの上限 (作業領域に対する比率)。Quick Look らしい控えめなサイズ。</summary>
-    private const double MaxRatio = 0.62;
+    /// <summary>ウィンドウの上限 (モニター作業領域に対する比率)。Quick Look らしい控えめなサイズ。
+    /// 縦長のコンテンツ (縦長 PDF・ポートレート写真/動画) が窮屈にならないよう、
+    /// 高さ方向は幅より大きく取る (横長コンテンツの見た目はこれまでと変わらない)。</summary>
+    private const double MaxWidthRatio = 0.62;
+    private const double MaxHeightRatio = 0.85;
 
     // Segoe MDL2 Assets: 再生 / 一時停止 (既存 Glyphs と同じく ConvertFromUtf32 で ASCII ソースを保つ)
     private static readonly string GlyphPlay = char.ConvertFromUtf32(0xE768);
@@ -185,7 +188,7 @@ public partial class QuickLookWindow : Window
         bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
         bmp.UriSource = new Uri(path);
         // 巨大画像でメモリを食い過ぎないよう、表示上限に合わせてデコード
-        bmp.DecodePixelWidth = (int)Math.Min(SystemParameters.WorkArea.Width * MaxRatio * 1.5, 1920);
+        bmp.DecodePixelWidth = (int)Math.Min(SystemParameters.WorkArea.Width * MaxWidthRatio * 1.5, 1920);
         bmp.EndInit();
         bmp.Freeze();
         return bmp;
@@ -459,8 +462,8 @@ public partial class QuickLookWindow : Window
 
     private void FitToContent(double contentW, double contentH, Window owner)
     {
-        var area = SystemParameters.WorkArea;
-        double maxW = area.Width * MaxRatio, maxH = area.Height * MaxRatio;
+        var area = GetOwnerMonitorWorkArea(owner);
+        double maxW = area.Width * MaxWidthRatio, maxH = area.Height * MaxHeightRatio;
         double scale = Math.Min(1.0, Math.Min(maxW / contentW, maxH / contentH));
         double w = Math.Max(360, contentW * scale);
         double h = Math.Max(240, contentH * scale);
@@ -469,11 +472,37 @@ public partial class QuickLookWindow : Window
         Width = w + 36;
         Height = h + 36;
 
-        double ownerCx = owner.Left + owner.Width / 2;
-        double ownerCy = owner.Top + owner.Height / 2;
-        if (double.IsNaN(ownerCx)) { ownerCx = area.Left + area.Width / 2; ownerCy = area.Top + area.Height / 2; }
-        Left = Math.Clamp(ownerCx - Width / 2, area.Left, area.Right - Width);
-        Top = Math.Clamp(ownerCy - Height / 2, area.Top, area.Bottom - Height);
+        // アプリが開いているディスプレイの中央に開く (ウィンドウ位置ではなくモニター基準)
+        Left = area.Left + (area.Width - Width) / 2;
+        Top = area.Top + (area.Height - Height) / 2;
+    }
+
+    /// <summary>owner ウィンドウが乗っているモニターの作業領域を WPF 単位 (DIP) で返す。
+    /// SystemParameters.WorkArea はプライマリモニター固定のため、マルチモニター環境で
+    /// 別ディスプレイにアプリを出している場合に備えて実際のモニターを判定する。</summary>
+    private static Rect GetOwnerMonitorWorkArea(Window owner)
+    {
+        try
+        {
+            var hwnd = new WindowInteropHelper(owner).Handle;
+            if (hwnd != IntPtr.Zero)
+            {
+                var hMonitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+                var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+                if (GetMonitorInfo(hMonitor, ref mi))
+                {
+                    var dpi = VisualTreeHelper.GetDpi(owner);
+                    return new Rect(
+                        mi.rcWork.left / dpi.DpiScaleX,
+                        mi.rcWork.top / dpi.DpiScaleY,
+                        (mi.rcWork.right - mi.rcWork.left) / dpi.DpiScaleX,
+                        (mi.rcWork.bottom - mi.rcWork.top) / dpi.DpiScaleY);
+                }
+            }
+        }
+        catch { /* 取得できなければ既定 (プライマリ) にフォールバック */ }
+        var fallback = SystemParameters.WorkArea;
+        return new Rect(fallback.Left, fallback.Top, fallback.Width, fallback.Height);
     }
 
     private void Card_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -482,6 +511,37 @@ public partial class QuickLookWindow : Window
         Host.Clip = new RectangleGeometry(
             new Rect(0, 0, e.NewSize.Width, e.NewSize.Height), 12, 12);
     }
+
+    /// <summary>プレビューを掴んでウィンドウごと移動できるようにする。
+    /// ボタン/スライダー/ハイパーリンクなど自前でクリックを処理する子要素は
+    /// イベントを Handled にするのでここまで届かず、ドラッグと干渉しない。</summary>
+    private void Card_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ButtonState == MouseButtonState.Pressed)
+        {
+            try { DragMove(); } catch { /* ボタン解放前にウィンドウが閉じた等は無視 */ }
+        }
+    }
+
+    private const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int left, top, right, bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public int dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
     // ---- メディア操作 ----
 
