@@ -69,9 +69,13 @@ public partial class QuickLookWindow : Window
 
         // handledEventsToo: true でないと ScrollViewer 等が内部でフォーカス処理のために
         // Handled にしてしまい (PDF/テキストのスクロール領域など)、ドラッグが始まらない。
-        // 再生バーのボタン/スライダーはハンドラー内で個別に除外する。
+        // 再生バーのボタン/スライダー・閉じるボタンはハンドラー内で個別に除外する。
         Card.AddHandler(MouseLeftButtonDownEvent,
             new MouseButtonEventHandler(Card_MouseLeftButtonDown), handledEventsToo: true);
+        Card.AddHandler(MouseLeftButtonUpEvent,
+            new MouseButtonEventHandler(Card_MouseLeftButtonUp), handledEventsToo: true);
+        Card.AddHandler(MouseMoveEvent,
+            new MouseEventHandler(Card_MouseMove), handledEventsToo: true);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -518,10 +522,18 @@ public partial class QuickLookWindow : Window
             new Rect(0, 0, e.NewSize.Width, e.NewSize.Height), 12, 12);
     }
 
-    /// <summary>プレビューを掴んでウィンドウごと移動できるようにする。
-    /// handledEventsToo で登録しているため、PDF/テキストの ScrollViewer が
-    /// フォーカス処理で Handled にしても確実にここまで届く。再生バー (ボタン/
-    /// スライダー) と閉じるボタンの上だけは、それぞれの操作を優先して除外する。</summary>
+    // ---- ウィンドウのドラッグ移動 (手動) ----
+    // Window.DragMove() は Windows のモーダル移動ループ (SC_MOVE) に入るが、
+    // このウィンドウは非アクティブ (WS_EX_NOACTIVATE) なため、その組み合わせは
+    // メッセージポンプを膠着させてフリーズを招くことがある。モーダルループを
+    // 一切使わず、マウスをキャプチャして自前で座標を動かす方式にする。
+    private bool _dragging;
+    private POINT _dragStartCursor;
+    private double _dragStartLeft, _dragStartTop;
+
+    /// <summary>プレビューを掴んで移動を開始する。handledEventsToo で登録しているため、
+    /// PDF/テキストの ScrollViewer が Handled にしても確実にここまで届く。再生バーと
+    /// 閉じるボタンの上だけは、それぞれの操作を優先して除外する。</summary>
     private void Card_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (e.ButtonState != MouseButtonState.Pressed)
@@ -529,13 +541,37 @@ public partial class QuickLookWindow : Window
         if (e.OriginalSource is DependencyObject src
             && (IsDescendantOf(src, MediaBar) || IsDescendantOf(src, CloseButton)))
             return;
+        if (!GetCursorPos(out _dragStartCursor))
+            return;
+        _dragStartLeft = Left;
+        _dragStartTop = Top;
+        _dragging = true;
+        Card.CaptureMouse();
+    }
 
-        try { DragMove(); } catch { /* ボタン解放前にウィンドウが閉じた等は無視 */ }
+    private void Card_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_dragging || e.LeftButton != MouseButtonState.Pressed)
+        {
+            if (_dragging)
+                EndDrag(); // ボタンが既に離れていた (キャプチャ外での解放など)
+            return;
+        }
+        if (!GetCursorPos(out var now))
+            return;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        Left = _dragStartLeft + (now.X - _dragStartCursor.X) / dpi.DpiScaleX;
+        Top = _dragStartTop + (now.Y - _dragStartCursor.Y) / dpi.DpiScaleY;
+    }
 
-        // DragMove (SC_MOVE) は Windows の移動ループを経由するため、
-        // WS_EX_NOACTIVATE でもこのウィンドウが前面化されることがある。
-        // 列のキー操作 (↑↓/Space/Esc) を引き続き使えるようフォーカスを戻す。
-        (Owner ?? Application.Current.MainWindow)?.Activate();
+    private void Card_MouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndDrag();
+
+    private void EndDrag()
+    {
+        if (!_dragging)
+            return;
+        _dragging = false;
+        Card.ReleaseMouseCapture();
     }
 
     /// <summary>node が ancestor 自身か、その (視覚 / 論理) 子孫かどうか。</summary>
@@ -600,6 +636,12 @@ public partial class QuickLookWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
 
     // ---- メディア操作 ----
 
