@@ -7,6 +7,80 @@
         WindowStartupLocation="Manual"
         PreviewKeyDown="QuickLookWindow_PreviewKeyDown">
 
+    <Window.Resources>
+        <!-- シークバーのトラック (再生済み / 未再生)。当たり判定は全高、見た目は細いバーだけ -->
+        <Style x:Key="SeekTrackButton" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Grid Background="Transparent">
+                            <Border Height="4" CornerRadius="2" VerticalAlignment="Center"
+                                    Background="{TemplateBinding Background}"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- つまみ: 普段は控えめな小さい円、ホバー/ドラッグ中は少し大きくなる -->
+        <Style x:Key="SeekThumbStyle" TargetType="Thumb">
+            <Setter Property="Width" Value="12"/>
+            <Setter Property="Height" Value="12"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Grid>
+                            <Ellipse x:Name="Dot" Width="10" Height="10" Fill="White">
+                                <Ellipse.Effect>
+                                    <DropShadowEffect BlurRadius="4" ShadowDepth="0" Opacity="0.5" Color="Black"/>
+                                </Ellipse.Effect>
+                            </Ellipse>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Dot" Property="Width" Value="13"/>
+                                <Setter TargetName="Dot" Property="Height" Value="13"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Dot" Property="Width" Value="13"/>
+                                <Setter TargetName="Dot" Property="Height" Value="13"/>
+                                <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- シークバー本体。再生済み側はアクセントカラー、残りは薄い白 -->
+        <Style x:Key="SeekSliderStyle" TargetType="Slider">
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Style="{StaticResource SeekTrackButton}"
+                                              Background="{DynamicResource AccentBrush}"
+                                              Command="Slider.DecreaseLarge"/>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Style="{StaticResource SeekTrackButton}"
+                                              Background="#40FFFFFF" Command="Slider.IncreaseLarge"/>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource SeekThumbStyle}"/>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
     <!-- 影のための余白。中身だけを角丸で見せる (タイトルバー・枠は一切なし) -->
     <Border x:Name="Card" Margin="18" CornerRadius="12"
             Background="{DynamicResource SurfaceBrush}"
@@ -75,7 +149,8 @@
                     <TextBlock x:Name="TimeText" DockPanel.Dock="Right" Foreground="White"
                                VerticalAlignment="Center" Margin="10,0,2,0" FontSize="11.5"
                                Text="0:00 / 0:00"/>
-                    <Slider x:Name="Seek" VerticalAlignment="Center" Margin="10,0"
+                    <Slider x:Name="Seek" Style="{StaticResource SeekSliderStyle}"
+                            VerticalAlignment="Center" Margin="10,0"
                             Minimum="0" Maximum="1" IsMoveToPointEnabled="True"
                             Thumb.DragStarted="Seek_DragStarted"
                             Thumb.DragCompleted="Seek_DragCompleted"
