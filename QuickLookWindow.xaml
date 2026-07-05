@@ -4,13 +4,14 @@
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
         Topmost="True" SnapsToDevicePixels="True" UseLayoutRounding="True"
-        WindowStartupLocation="Manual">
+        WindowStartupLocation="Manual"
+        PreviewKeyDown="QuickLookWindow_PreviewKeyDown">
 
     <!-- 影のための余白。中身だけを角丸で見せる (タイトルバー・枠は一切なし) -->
     <Border x:Name="Card" Margin="18" CornerRadius="12"
             Background="{DynamicResource SurfaceBrush}"
             SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged"
-            MouseLeftButtonDown="Card_MouseLeftButtonDown">
+            MouseEnter="Card_MouseEnter" MouseLeave="Card_MouseLeave">
         <Border.Effect>
             <DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.32" Color="Black"/>
         </Border.Effect>
@@ -81,6 +82,27 @@
                             PreviewMouseLeftButtonUp="Seek_Clicked"/>
                 </DockPanel>
             </Border>
+
+            <!-- ホバー時だけ現れる閉じるボタン (唯一の装飾)。 -->
+            <Button x:Name="CloseButton" Width="28" Height="28" Margin="10"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Opacity="0" IsHitTestVisible="False" Cursor="Hand"
+                    Click="CloseButton_Click" FontFamily="{StaticResource IconFont}"
+                    FontSize="10" Content="&#xE8BB;">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="#CC1A1A1A" CornerRadius="14">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextElement.Foreground="White"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FFE0553F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
         </Grid>
     </Border>
 </Window>

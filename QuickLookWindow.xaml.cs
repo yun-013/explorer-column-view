@@ -66,6 +66,12 @@ public partial class QuickLookWindow : Window
         _hideBarTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.6) };
         _hideBarTimer.Tick += (_, _) => { _hideBarTimer.Stop(); FadeBar(false); };
         MouseMove += (_, _) => RevealBar();
+
+        // handledEventsToo: true でないと ScrollViewer 等が内部でフォーカス処理のために
+        // Handled にしてしまい (PDF/テキストのスクロール領域など)、ドラッグが始まらない。
+        // 再生バーのボタン/スライダーはハンドラー内で個別に除外する。
+        Card.AddHandler(MouseLeftButtonDownEvent,
+            new MouseButtonEventHandler(Card_MouseLeftButtonDown), handledEventsToo: true);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -513,13 +519,65 @@ public partial class QuickLookWindow : Window
     }
 
     /// <summary>プレビューを掴んでウィンドウごと移動できるようにする。
-    /// ボタン/スライダー/ハイパーリンクなど自前でクリックを処理する子要素は
-    /// イベントを Handled にするのでここまで届かず、ドラッグと干渉しない。</summary>
+    /// handledEventsToo で登録しているため、PDF/テキストの ScrollViewer が
+    /// フォーカス処理で Handled にしても確実にここまで届く。再生バー (ボタン/
+    /// スライダー) と閉じるボタンの上だけは、それぞれの操作を優先して除外する。</summary>
     private void Card_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ButtonState == MouseButtonState.Pressed)
+        if (e.ButtonState != MouseButtonState.Pressed)
+            return;
+        if (e.OriginalSource is DependencyObject src
+            && (IsDescendantOf(src, MediaBar) || IsDescendantOf(src, CloseButton)))
+            return;
+
+        try { DragMove(); } catch { /* ボタン解放前にウィンドウが閉じた等は無視 */ }
+
+        // DragMove (SC_MOVE) は Windows の移動ループを経由するため、
+        // WS_EX_NOACTIVATE でもこのウィンドウが前面化されることがある。
+        // 列のキー操作 (↑↓/Space/Esc) を引き続き使えるようフォーカスを戻す。
+        (Owner ?? Application.Current.MainWindow)?.Activate();
+    }
+
+    /// <summary>node が ancestor 自身か、その (視覚 / 論理) 子孫かどうか。</summary>
+    private static bool IsDescendantOf(DependencyObject? node, DependencyObject ancestor)
+    {
+        while (node is not null)
         {
-            try { DragMove(); } catch { /* ボタン解放前にウィンドウが閉じた等は無視 */ }
+            if (ReferenceEquals(node, ancestor))
+                return true;
+            node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+        }
+        return false;
+    }
+
+    private void Card_MouseEnter(object sender, MouseEventArgs e)
+    {
+        CloseButton.Opacity = 1;
+        CloseButton.IsHitTestVisible = true;
+    }
+
+    private void Card_MouseLeave(object sender, MouseEventArgs e)
+    {
+        CloseButton.Opacity = 0;
+        CloseButton.IsHitTestVisible = false;
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e)
+    {
+        var owner = Owner ?? Application.Current.MainWindow;
+        CloseQuickLook();
+        owner?.Activate();
+    }
+
+    /// <summary>プレビューにフォーカスが渡ってしまった場合の保険。Space / Esc で必ず閉じる。</summary>
+    private void QuickLookWindow_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is Key.Space or Key.Escape)
+        {
+            e.Handled = true;
+            var owner = Owner ?? Application.Current.MainWindow;
+            CloseQuickLook();
+            owner?.Activate();
         }
     }
 
