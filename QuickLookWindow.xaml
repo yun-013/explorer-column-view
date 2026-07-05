@@ -8,7 +8,8 @@
         PreviewKeyDown="QuickLookWindow_PreviewKeyDown">
 
     <Window.Resources>
-        <!-- シークバーのトラック (再生済み / 未再生)。当たり判定は全高、見た目は細いバーだけ -->
+        <!-- シークバーのトラック (再生済み / 未再生)。当たり判定は全高、見た目は細いバーだけ。
+             高さ 3 + 半径 1.5 で左右端が完全な半円になる (継ぎ目はつまみが覆う) -->
         <Style x:Key="SeekTrackButton" TargetType="RepeatButton">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="IsTabStop" Value="False"/>
@@ -16,9 +17,37 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="RepeatButton">
                         <Grid Background="Transparent">
-                            <Border Height="4" CornerRadius="2" VerticalAlignment="Center"
+                            <Border Height="3" CornerRadius="1.5" VerticalAlignment="Center"
                                     Background="{TemplateBinding Background}"/>
                         </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 再生バーのアイコンボタン (再生/一時停止): 丸いハイライトでホバー -->
+        <Style x:Key="BarIconButton" TargetType="Button">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="14">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2EFFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#45FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -142,10 +171,9 @@
                     Opacity="0" CornerRadius="10" Margin="12" Padding="12,7"
                     Background="#CC1A1A1A">
                 <DockPanel LastChildFill="True">
-                    <Button x:Name="PlayPause" DockPanel.Dock="Left" Width="28" Height="28"
-                            Background="Transparent" BorderThickness="0" Foreground="White"
-                            Cursor="Hand" Click="PlayPause_Click"
-                            FontFamily="{StaticResource IconFont}" FontSize="14" Content="&#xE769;"/>
+                    <Button x:Name="PlayPause" DockPanel.Dock="Left"
+                            Style="{StaticResource BarIconButton}"
+                            Click="PlayPause_Click" Content="&#xE769;"/>
                     <TextBlock x:Name="TimeText" DockPanel.Dock="Right" Foreground="White"
                                VerticalAlignment="Center" Margin="10,0,2,0" FontSize="11.5"
                                Text="0:00 / 0:00"/>

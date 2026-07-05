@@ -61,7 +61,7 @@ public partial class QuickLookWindow : Window
     public QuickLookWindow()
     {
         InitializeComponent();
-        _mediaTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
+        _mediaTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _mediaTimer.Tick += (_, _) => SyncSeek();
         _hideBarTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1.6) };
         _hideBarTimer.Tick += (_, _) => { _hideBarTimer.Stop(); FadeBar(false); };
@@ -357,10 +357,11 @@ public partial class QuickLookWindow : Window
         using var ras = new InMemoryRandomAccessStream();
         await page.RenderToStreamAsync(ras, new PdfPageRenderOptions { DestinationWidth = PdfRenderWidth });
         ras.Seek(0);
-        var ms = new MemoryStream();
+        using var ms = new MemoryStream();
         await ras.AsStreamForRead().CopyToAsync(ms);
         return await Task.Run(() =>
         {
+            // OnLoad なので EndInit 時点でデコード済み。ストリームは using で解放される
             ms.Position = 0;
             var bmp = new BitmapImage();
             bmp.BeginInit();
@@ -654,25 +655,39 @@ public partial class QuickLookWindow : Window
 
     private void MediaView_MediaEnded(object sender, RoutedEventArgs e)
     {
-        MediaView.Position = TimeSpan.Zero;
-        MediaView.Pause();
+        try
+        {
+            MediaView.Position = TimeSpan.Zero;
+            MediaView.Pause();
+        }
+        catch { /* メディアが既にアンロードされていたら無視 */ }
         _isPlaying = false;
         PlayPause.Content = GlyphPlay;
     }
 
     private void PlayPause_Click(object sender, RoutedEventArgs e)
     {
-        if (_isPlaying) { MediaView.Pause(); PlayPause.Content = GlyphPlay; }
-        else { MediaView.Play(); PlayPause.Content = GlyphPause; }
-        _isPlaying = !_isPlaying;
+        try
+        {
+            if (_isPlaying) { MediaView.Pause(); PlayPause.Content = GlyphPlay; }
+            else { MediaView.Play(); PlayPause.Content = GlyphPause; }
+            _isPlaying = !_isPlaying;
+        }
+        catch { /* メディアが既にアンロードされていたら無視 */ }
     }
 
     private void SyncSeek()
     {
         if (_seeking || !MediaView.NaturalDuration.HasTimeSpan)
             return;
-        Seek.Value = MediaView.Position.TotalSeconds;
-        TimeText.Text = $"{Fmt(MediaView.Position)} / {Fmt(MediaView.NaturalDuration.TimeSpan)}";
+        // 変化のないフレームでは UI を触らない (タイマー起因の無駄な再描画を抑える)
+        var pos = MediaView.Position;
+        var next = pos.TotalSeconds;
+        if (Math.Abs(Seek.Value - next) > 0.05)
+            Seek.Value = next;
+        var text = $"{Fmt(pos)} / {Fmt(MediaView.NaturalDuration.TimeSpan)}";
+        if (TimeText.Text != text)
+            TimeText.Text = text;
     }
 
     private static string Fmt(TimeSpan t) =>
@@ -683,12 +698,22 @@ public partial class QuickLookWindow : Window
 
     private void Seek_DragCompleted(object sender, DragCompletedEventArgs e)
     {
-        MediaView.Position = TimeSpan.FromSeconds(Seek.Value);
+        SetMediaPosition(Seek.Value);
         _seeking = false;
     }
 
     private void Seek_Clicked(object sender, MouseButtonEventArgs e)
-        => MediaView.Position = TimeSpan.FromSeconds(Seek.Value);
+        => SetMediaPosition(Seek.Value);
+
+    private void SetMediaPosition(double seconds)
+    {
+        try
+        {
+            if (MediaView.Source is not null)
+                MediaView.Position = TimeSpan.FromSeconds(seconds);
+        }
+        catch { /* アンロード直後のシークは無視 */ }
+    }
 
     // ---- ホバーで操作バーを出す ----
 
