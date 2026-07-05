@@ -68,34 +68,72 @@ public partial class QuickLookWindow : Window
         SetWindowLong(hwnd, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW);
     }
 
-    /// <summary>指定項目のプレビューを表示 (既に開いていれば中身だけ差し替え)。</summary>
-    public void ShowFor(FileSystemItem item, Window owner)
+    /// <summary>連続で選択を変えたとき、遅れて完了した古い読み込みを捨てるための世代番号。</summary>
+    private int _showGen;
+
+    /// <summary>指定項目のプレビューを表示 (既に開いていれば中身だけ差し替え)。
+    /// 重いデコード / サムネイル抽出はバックグラウンドで行い、UI を止めない。
+    /// 読み込み完了までは直前の中身を出したままにする (矢印キー連打で白抜けしない)。</summary>
+    public async void ShowFor(FileSystemItem item, Window owner)
     {
         CurrentPath = item.Path;
-        ResetViews();
+        int gen = ++_showGen;
+        var path = item.Path;
+        var ext = Path.GetExtension(path);
 
-        var ext = Path.GetExtension(item.Path);
+        // メディア再生中は先に止める (次の読み込み中に音が鳴り続けないように)
+        if (_mediaMode)
+            ResetViews();
+
         try
         {
-            if (item.IsDirectory)
-                ShowThumbnail(item.Path);
-            else if (ShellMetadata.IsImage(item.Name))
-                ShowImage(item.Path, owner);
-            else if (AudioExts.Contains(ext))
-                ShowMedia(item.Path, owner, audio: true);
-            else if (ShellMetadata.IsMedia(item.Name))
-                ShowMedia(item.Path, owner, audio: false);
-            else if (TextExts.Contains(ext) || string.IsNullOrEmpty(ext))
-                ShowText(item.Path, item.Name, owner);
+            if (!item.IsDirectory && (AudioExts.Contains(ext) || ShellMetadata.IsMedia(item.Name)))
+            {
+                ResetViews();
+                ShowMedia(path, owner, audio: AudioExts.Contains(ext));
+            }
+            else if (!item.IsDirectory && ShellMetadata.IsImage(item.Name))
+            {
+                var bmp = await Task.Run(() => DecodeImage(path));
+                if (gen != _showGen)
+                    return;
+                ResetViews();
+                ImageView.Source = bmp;
+                ImageView.Visibility = Visibility.Visible;
+                double w = bmp.PixelWidth, h = bmp.PixelHeight;
+                if (w <= 0 || h <= 0) { w = 640; h = 480; }
+                FitToContent(w, h, owner);
+            }
+            else if (!item.IsDirectory && (TextExts.Contains(ext) || string.IsNullOrEmpty(ext)))
+            {
+                var text = await Task.Run(() => ReadTextHead(path));
+                if (gen != _showGen)
+                    return;
+                if (text is null)
+                {
+                    await ShowThumbnailAsync(path, gen, owner); // バイナリだった → サムネイルへ
+                }
+                else
+                {
+                    ResetViews();
+                    TextView.Text = text;
+                    TextScroll.Visibility = Visibility.Visible;
+                    FitToContent(760, 620, owner);
+                }
+            }
             else
-                ShowThumbnail(item.Path);
+            {
+                await ShowThumbnailAsync(path, gen, owner);
+            }
         }
         catch
         {
-            ShowThumbnail(item.Path);
+            if (gen != _showGen)
+                return;
+            try { await ShowThumbnailAsync(path, gen, owner); } catch { }
         }
 
-        if (!IsVisible)
+        if (gen == _showGen && !IsVisible)
             Show();
     }
 
@@ -117,7 +155,8 @@ public partial class QuickLookWindow : Window
 
     // ---- 種類ごとの表示 ----
 
-    private void ShowImage(string path, Window owner)
+    /// <summary>画像をワーカースレッドでデコードする (Freeze して UI へ渡す)。</summary>
+    private static BitmapImage DecodeImage(string path)
     {
         var bmp = new BitmapImage();
         bmp.BeginInit();
@@ -128,15 +167,11 @@ public partial class QuickLookWindow : Window
         bmp.DecodePixelWidth = (int)Math.Min(SystemParameters.WorkArea.Width * 1.5, 2560);
         bmp.EndInit();
         bmp.Freeze();
-
-        ImageView.Source = bmp;
-        ImageView.Visibility = Visibility.Visible;
-        double w = bmp.PixelWidth, h = bmp.PixelHeight;
-        if (w <= 0 || h <= 0) { w = 640; h = 480; }
-        FitToContent(w, h, owner);
+        return bmp;
     }
 
-    private void ShowText(string path, string name, Window owner)
+    /// <summary>テキストの先頭を読む。バイナリらしければ null (サムネイル表示へ回す)。</summary>
+    private static string? ReadTextHead(string path)
     {
         string text;
         using (var reader = new StreamReader(path, detectEncodingFromByteOrderMarks: true))
@@ -149,13 +184,8 @@ public partial class QuickLookWindow : Window
         }
         // NUL が多いバイナリはテキスト扱いしない
         if (text.Length > 0 && text.Count(c => c == '\0') > text.Length / 64)
-        {
-            ShowThumbnail(path);
-            return;
-        }
-        TextView.Text = text;
-        TextScroll.Visibility = Visibility.Visible;
-        FitToContent(760, 620, owner);
+            return null;
+        return text;
     }
 
     private void ShowMedia(string path, Window owner, bool audio)
@@ -177,12 +207,19 @@ public partial class QuickLookWindow : Window
         RevealBar();
     }
 
-    private void ShowThumbnail(string path)
+    /// <summary>シェルの大サムネイル (PDF・Office・フォルダー等のフォールバック) を非同期で表示。</summary>
+    private async Task ShowThumbnailAsync(string path, int gen, Window owner)
     {
-        long stamp = 0;
-        try { stamp = new FileInfo(path).LastWriteTimeUtc.Ticks; } catch { }
-        var img = ShellThumbnail.Get(path, 1024, stamp, allowDownload: true)
-                  ?? IconCache.GetByPath(path);
+        var img = await Task.Run(() =>
+        {
+            long stamp = 0;
+            try { stamp = new FileInfo(path).LastWriteTimeUtc.Ticks; } catch { }
+            return ShellThumbnail.Get(path, 1024, stamp, allowDownload: true)
+                   ?? IconCache.GetByPath(path);
+        });
+        if (gen != _showGen)
+            return;
+        ResetViews();
         ImageView.Source = img;
         ImageView.Visibility = Visibility.Visible;
         double w = 720, h = 560;
@@ -190,7 +227,7 @@ public partial class QuickLookWindow : Window
         {
             w = img.Width; h = img.Height;
         }
-        FitToContent(w, h, Application.Current.MainWindow ?? this);
+        FitToContent(w, h, owner);
     }
 
     // ---- サイズ・配置 ----
@@ -296,10 +333,11 @@ public partial class QuickLookWindow : Window
         MediaBar.Opacity = show ? 1 : 0;
     }
 
-    /// <summary>プレビューを閉じる (メディアを止めて隠す)。</summary>
+    /// <summary>プレビューを閉じる (メディアを止めて隠す)。進行中の読み込みも無効化する。</summary>
     public void CloseQuickLook()
     {
         CurrentPath = null;
+        _showGen++; // 遅れて完了した読み込みが再表示しないように
         _mediaTimer.Stop();
         StopMedia();
         Hide();

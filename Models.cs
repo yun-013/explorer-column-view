@@ -606,26 +606,33 @@ public class ColumnModel : ObservableObject, IDisposable
 
     /// <summary>
     /// 表示中ファイルの実アイコン / サムネイルをバックグラウンドで読み込み、順次差し替える。
-    /// サムネイルはキャッシュ済みのみ取得 (allowDownload=false) なのでクラウド実体を取りに行かない。
+    /// クラウド専用ファイルは WantsThumbnail の段階で除外済みなので、ここでの取得が
+    /// ダウンロードを誘発することはない (ローカル実体からの抽出のみ)。
+    /// 少数ずつ並行してシェルに問い合わせ、UI スレッドへの往復回数も抑える。
     /// </summary>
     private async Task LoadIconsAsync(CancellationToken ct)
     {
-        foreach (var item in Items.Where(i => i.WantsRealIcon || i.WantsThumbnail).ToList())
+        var pending = Items.Where(i => i.WantsRealIcon || i.WantsThumbnail).ToList();
+        const int lanes = 3;
+        for (int i = 0; i < pending.Count; i += lanes)
         {
             if (ct.IsCancellationRequested)
                 return;
-            var path = item.Path;
-            var wantThumb = item.WantsThumbnail;
-            var stamp = item.Modified.Ticks;
+            var batch = pending.Skip(i).Take(lanes)
+                .Select(item => Task.Run(() => (item, image: item.WantsThumbnail
+                    ? ShellThumbnail.Get(item.Path, FileSystemItem.ThumbnailSize, item.Modified.Ticks, allowDownload: true)
+                    : IconCache.GetByPath(item.Path)), ct))
+                .ToList();
             try
             {
-                var image = await Task.Run(() => wantThumb
-                    ? ShellThumbnail.Get(path, FileSystemItem.ThumbnailSize, stamp, allowDownload: false)
-                    : IconCache.GetByPath(path), ct).ConfigureAwait(true);
-                if (ct.IsCancellationRequested)
-                    return;
-                if (image is not null)
-                    item.ApplyRealIcon(image);
+                foreach (var task in batch)
+                {
+                    var (item, image) = await task.ConfigureAwait(true);
+                    if (ct.IsCancellationRequested)
+                        return;
+                    if (image is not null)
+                        item.ApplyRealIcon(image);
+                }
             }
             catch (OperationCanceledException)
             {

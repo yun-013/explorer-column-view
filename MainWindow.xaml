@@ -258,8 +258,7 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Image Grid.Column="0" Width="24" Height="24"
-                       Source="{Binding Icon}" VerticalAlignment="Center"
-                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                       Source="{Binding Icon}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
                     <!-- 検索結果: 検索起点から見た場所 (サブフォルダー) を小さく添える -->

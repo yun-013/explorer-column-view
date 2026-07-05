@@ -52,6 +52,13 @@ public static class ShellThumbnail
     private static readonly Dictionary<string, ImageSource?> _cache = new(StringComparer.OrdinalIgnoreCase);
     private static readonly object _lock = new();
 
+    /// <summary>キャッシュに載せる上限サイズ。プレビュー用の大サムネイルはメモリを食うので
+    /// 載せない (シェル側のサムネイルキャッシュが効くため再取得は速い)。</summary>
+    private const int MaxCachedSize = 256;
+
+    /// <summary>キャッシュの件数上限。超えたら丸ごと捨てる (48px 数千件で数十 MB 程度が目安)。</summary>
+    private const int MaxCacheEntries = 4096;
+
     private static string Key(string path, long stamp, int size) => $"{path}|{stamp}|{size}";
 
     /// <summary>
@@ -60,6 +67,9 @@ public static class ShellThumbnail
     /// </summary>
     public static ImageSource? Get(string path, int size, long stamp, bool allowDownload)
     {
+        if (size > MaxCachedSize)
+            return Load(path, size, allowDownload);
+
         var key = Key(path, stamp, size);
         lock (_lock)
         {
@@ -70,6 +80,8 @@ public static class ShellThumbnail
         var image = Load(path, size, allowDownload);
         lock (_lock)
         {
+            if (_cache.Count >= MaxCacheEntries)
+                _cache.Clear();
             _cache[key] = image;
         }
         return image;

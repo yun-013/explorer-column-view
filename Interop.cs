@@ -32,7 +32,7 @@ public static class IconCache
     private static extern bool DestroyIcon(nint hIcon);
 
     private const uint SHGFI_ICON = 0x100;
-    private const uint SHGFI_SMALLICON = 0x1;
+    private const uint SHGFI_LARGEICON = 0x0; // 32px。行は 24px 表示なので縮小方向になり滲まない
     private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
     private const uint SHGFI_TYPENAME = 0x400;
     private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
@@ -100,7 +100,7 @@ public static class IconCache
     private static ImageSource? Load(string path, uint attributes, uint extraFlags)
     {
         var shfi = new SHFILEINFO();
-        var result = SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_ICON | SHGFI_SMALLICON | extraFlags);
+        var result = SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_ICON | SHGFI_LARGEICON | extraFlags);
         if (result == 0 || shfi.hIcon == 0)
             return null;
         try
