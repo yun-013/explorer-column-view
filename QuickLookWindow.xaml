@@ -5,6 +5,7 @@
         ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
         Topmost="True" SnapsToDevicePixels="True" UseLayoutRounding="True"
         WindowStartupLocation="Manual"
+        FontFamily="{DynamicResource {x:Static SystemFonts.MessageFontFamilyKey}}"
         PreviewKeyDown="QuickLookWindow_PreviewKeyDown">
 
     <Window.Resources>
