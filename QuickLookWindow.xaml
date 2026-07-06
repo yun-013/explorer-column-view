@@ -59,8 +59,8 @@
             </Setter>
         </Style>
 
-        <!-- つまみ: 普段は隠れていて、バーにホバーしたときだけ現れるアクセント色の円
-             (YouTube などのモダンプレイヤーと同じ流儀。線だけのすっきりした見た目を保つ) -->
+        <!-- つまみ: YouTube と同じく常時表示のアクセント色の円。ホバー/ドラッグ中は少し大きくなる。
+             常時描画することで、バー上でつまみの幅の分だけ何も描かれない「途切れ」も無くなる -->
         <Style x:Key="SeekThumbStyle" TargetType="Thumb">
             <Setter Property="Width" Value="14"/>
             <Setter Property="Height" Value="14"/>
@@ -69,15 +69,15 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
                         <Grid Background="Transparent">
-                            <Ellipse x:Name="Dot" Width="11" Height="11" Opacity="0"
+                            <Ellipse x:Name="Dot" Width="11" Height="11"
                                      Fill="{DynamicResource AccentBrush}"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
-                                <Setter TargetName="Dot" Property="Opacity" Value="1"/>
+                                <Setter TargetName="Dot" Property="Width" Value="13"/>
+                                <Setter TargetName="Dot" Property="Height" Value="13"/>
                             </DataTrigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="Dot" Property="Opacity" Value="1"/>
                                 <Setter TargetName="Dot" Property="Width" Value="13"/>
                                 <Setter TargetName="Dot" Property="Height" Value="13"/>
                             </Trigger>
@@ -185,8 +185,9 @@
                 </Rectangle>
 
                 <StackPanel VerticalAlignment="Bottom">
-                    <!-- シークバーは端から端まで (YouTube と同じく側面の余白なし) -->
+                    <!-- シークバーは下の操作行より少し内側に絞り、端に張り付かないようにする -->
                     <Slider x:Name="Seek" Style="{StaticResource SeekSliderStyle}"
+                            Margin="14,0,14,0"
                             Minimum="0" Maximum="1"
                             Thumb.DragStarted="Seek_DragStarted"
                             Thumb.DragCompleted="Seek_DragCompleted"
