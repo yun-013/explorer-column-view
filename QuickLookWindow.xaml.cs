@@ -539,6 +539,13 @@ public partial class QuickLookWindow : Window
     {
         if (e.ButtonState != MouseButtonState.Pressed)
             return;
+
+        // このウィンドウは決してアクティブにならない (WS_EX_NOACTIVATE) ので、
+        // 他アプリを使った後にプレビューをクリックしてもキーボードフォーカスは
+        // 他アプリに残ったままになる。クリックでメインウィンドウを明示的に
+        // アクティブ化し、Space / Esc / ↑↓ が再び効くようにする
+        try { (Owner ?? Application.Current.MainWindow)?.Activate(); } catch { }
+
         if (e.OriginalSource is DependencyObject src
             && (IsDescendantOf(src, MediaBar) || IsDescendantOf(src, CloseButton)))
             return;
@@ -702,8 +709,31 @@ public partial class QuickLookWindow : Window
         _seeking = false;
     }
 
-    private void Seek_Clicked(object sender, MouseButtonEventArgs e)
-        => SetMediaPosition(Seek.Value);
+    /// <summary>バーの任意の位置をクリックしたらそこへ即ジャンプする。
+    /// Slider 標準の LargeChange (1 秒) 頼みだと「飛ばない」ように見えるため、
+    /// クリック座標から値を直接計算する。つまみ自体のドラッグはそのまま生かす。</summary>
+    private void Seek_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.OriginalSource is DependencyObject src && IsInThumb(src))
+            return; // つまみの上はドラッグ開始に任せる
+        if (Seek.Template.FindName("PART_Track", Seek) is not Track track)
+            return;
+        var value = Math.Clamp(track.ValueFromPoint(e.GetPosition(track)), Seek.Minimum, Seek.Maximum);
+        Seek.Value = value;
+        SetMediaPosition(value);
+        e.Handled = true;
+    }
+
+    private static bool IsInThumb(DependencyObject? node)
+    {
+        while (node is not null)
+        {
+            if (node is Thumb)
+                return true;
+            node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+        }
+        return false;
+    }
 
     private void SetMediaPosition(double seconds)
     {

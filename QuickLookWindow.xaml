@@ -90,15 +90,16 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Slider">
+                        <!-- クリック時のジャンプはコード側 (Seek_PreviewMouseLeftButtonDown) で
+                             位置から直接計算する。LargeChange コマンドだと 1 秒しか動かない -->
                         <Track x:Name="PART_Track">
                             <Track.DecreaseRepeatButton>
                                 <RepeatButton Style="{StaticResource SeekTrackButton}"
-                                              Background="{DynamicResource AccentBrush}"
-                                              Command="Slider.DecreaseLarge"/>
+                                              Background="{DynamicResource AccentBrush}"/>
                             </Track.DecreaseRepeatButton>
                             <Track.IncreaseRepeatButton>
                                 <RepeatButton Style="{StaticResource SeekTrackButton}"
-                                              Background="#40FFFFFF" Command="Slider.IncreaseLarge"/>
+                                              Background="#40FFFFFF"/>
                             </Track.IncreaseRepeatButton>
                             <Track.Thumb>
                                 <Thumb Style="{StaticResource SeekThumbStyle}"/>
@@ -166,9 +167,9 @@
                            MaxWidth="360" Foreground="{DynamicResource TextPrimaryBrush}"/>
             </StackPanel>
 
-            <!-- ホバー時だけ現れる操作バー (動画・音声のシーク) -->
+            <!-- ホバー時だけ現れる操作バー (動画・音声のシーク)。左右端が完全な丸のピル型 -->
             <Border x:Name="MediaBar" VerticalAlignment="Bottom" Visibility="Collapsed"
-                    Opacity="0" CornerRadius="10" Margin="12" Padding="12,7"
+                    Opacity="0" CornerRadius="18" Margin="12" Padding="10,4"
                     Background="#CC1A1A1A">
                 <DockPanel LastChildFill="True">
                     <Button x:Name="PlayPause" DockPanel.Dock="Left"
@@ -179,10 +180,10 @@
                                Text="0:00 / 0:00"/>
                     <Slider x:Name="Seek" Style="{StaticResource SeekSliderStyle}"
                             VerticalAlignment="Center" Margin="10,0"
-                            Minimum="0" Maximum="1" IsMoveToPointEnabled="True"
+                            Minimum="0" Maximum="1"
                             Thumb.DragStarted="Seek_DragStarted"
                             Thumb.DragCompleted="Seek_DragCompleted"
-                            PreviewMouseLeftButtonUp="Seek_Clicked"/>
+                            PreviewMouseLeftButtonDown="Seek_PreviewMouseLeftButtonDown"/>
                 </DockPanel>
             </Border>
 

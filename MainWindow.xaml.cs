@@ -1617,6 +1617,19 @@ public partial class MainWindow : Window
 
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // プレビューが開いている間はフォーカスがどこにあっても Space / Esc で閉じる。
+        // 他アプリから戻った直後は列 (ListBox) にフォーカスが無いことがあり、
+        // 列のハンドラーだけに頼ると「キーが効かない」ように見えるため
+        if (Keyboard.Modifiers == ModifierKeys.None
+            && e.Key is Key.Space or Key.Escape
+            && Keyboard.FocusedElement is not TextBox
+            && _quickLook is { IsVisible: true })
+        {
+            _quickLook.CloseQuickLook();
+            e.Handled = true;
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Alt)
         {
             switch (e.SystemKey)
