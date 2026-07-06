@@ -59,8 +59,9 @@
             </Setter>
         </Style>
 
-        <!-- つまみ: YouTube と同じく常時表示のアクセント色の円。ホバー/ドラッグ中は少し大きくなる。
-             常時描画することで、バー上でつまみの幅の分だけ何も描かれない「途切れ」も無くなる -->
+        <!-- つまみ: YouTube と同じく常時表示のアクセント色の円。ホバー/ドラッグ中は全方向に少し
+             大きくなる。箱 (14) も円 (10/12) も偶数サイズで揃え、UseLayoutRounding 環境で
+             奇数サイズ (半端な余白=1.5px 等) が片側に寄って丸められるのを避け、常に中心を保つ -->
         <Style x:Key="SeekThumbStyle" TargetType="Thumb">
             <Setter Property="Width" Value="14"/>
             <Setter Property="Height" Value="14"/>
@@ -69,17 +70,18 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
                         <Grid Background="Transparent">
-                            <Ellipse x:Name="Dot" Width="11" Height="11"
+                            <Ellipse x:Name="Dot" Width="10" Height="10"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"
                                      Fill="{DynamicResource AccentBrush}"/>
                         </Grid>
                         <ControlTemplate.Triggers>
                             <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
-                                <Setter TargetName="Dot" Property="Width" Value="13"/>
-                                <Setter TargetName="Dot" Property="Height" Value="13"/>
+                                <Setter TargetName="Dot" Property="Width" Value="12"/>
+                                <Setter TargetName="Dot" Property="Height" Value="12"/>
                             </DataTrigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="Dot" Property="Width" Value="13"/>
-                                <Setter TargetName="Dot" Property="Height" Value="13"/>
+                                <Setter TargetName="Dot" Property="Width" Value="12"/>
+                                <Setter TargetName="Dot" Property="Height" Value="12"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
