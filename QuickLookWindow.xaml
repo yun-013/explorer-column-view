@@ -171,28 +171,40 @@
                            MaxWidth="360" Foreground="{DynamicResource TextPrimaryBrush}"/>
             </StackPanel>
 
-            <!-- ホバー時だけ現れる操作バー (動画・音声のシーク)。左右端が完全な丸のピル型 -->
-            <Border x:Name="MediaBar" VerticalAlignment="Bottom" Visibility="Collapsed"
-                    Opacity="0" CornerRadius="18" Margin="12" Padding="10,4"
-                    Background="#CC1A1A1A">
-                <DockPanel LastChildFill="True">
-                    <Button x:Name="PlayPause" DockPanel.Dock="Left"
-                            Style="{StaticResource BarIconButton}"
-                            Click="PlayPause_Click" Content="&#xE769;"/>
-                    <!-- 時刻: 現在位置は白、全体は薄く (視線が今の位置に行くように) -->
-                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
-                                VerticalAlignment="Center" Margin="10,0,4,0">
-                        <TextBlock x:Name="TimeCur" Foreground="White" FontSize="11" Text="0:00"/>
-                        <TextBlock x:Name="TimeTotal" Foreground="#8CFFFFFF" FontSize="11" Text=" / 0:00"/>
-                    </StackPanel>
+            <!-- ホバー時だけ現れる操作バー (動画・音声のシーク)。
+                 YouTube と同じく背景の箱は持たず、下端の薄いグラデーションの上に
+                 シークバーと操作行を直接乗せるだけの構成 -->
+            <Grid x:Name="MediaBar" VerticalAlignment="Bottom" Visibility="Collapsed" Opacity="0">
+                <Rectangle Height="84" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#9E000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+
+                <StackPanel VerticalAlignment="Bottom">
+                    <!-- シークバーは端から端まで (YouTube と同じく側面の余白なし) -->
                     <Slider x:Name="Seek" Style="{StaticResource SeekSliderStyle}"
-                            VerticalAlignment="Center" Margin="10,0"
                             Minimum="0" Maximum="1"
                             Thumb.DragStarted="Seek_DragStarted"
                             Thumb.DragCompleted="Seek_DragCompleted"
                             PreviewMouseLeftButtonDown="Seek_PreviewMouseLeftButtonDown"/>
-                </DockPanel>
-            </Border>
+
+                    <DockPanel LastChildFill="False" Margin="10,0,14,9">
+                        <Button x:Name="PlayPause" DockPanel.Dock="Left"
+                                Style="{StaticResource BarIconButton}"
+                                Click="PlayPause_Click" Content="&#xE769;"/>
+                        <!-- 時刻: 現在位置は白、全体は薄く (視線が今の位置に行くように) -->
+                        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal"
+                                    VerticalAlignment="Center" Margin="6,0,0,0">
+                            <TextBlock x:Name="TimeCur" Foreground="White" FontSize="11" Text="0:00"/>
+                            <TextBlock x:Name="TimeTotal" Foreground="#8CFFFFFF" FontSize="11" Text=" / 0:00"/>
+                        </StackPanel>
+                    </DockPanel>
+                </StackPanel>
+            </Grid>
 
             <!-- ホバー時だけ現れる閉じるボタン (唯一の装飾)。 -->
             <Button x:Name="CloseButton" Width="28" Height="28" Margin="10"
