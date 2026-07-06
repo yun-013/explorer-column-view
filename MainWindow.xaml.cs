@@ -828,7 +828,9 @@ public partial class MainWindow : Window
         var screen = lb.PointToScreen(e.GetPosition(lb));
         e.Handled = true;
 
-        var cloudCapable = CloudSync.ProviderForPath(targetPath) is not null;
+        // ピン属性での切替が効くのは cfapi 登録のクラウドのみ。Google ドライブ (DriveFS) は
+        // 独自メニュー (オフライン アクセス) がシェルメニュー側に出るので独自項目は足さない
+        var cloudCapable = CloudSync.IsCfapiPath(targetPath);
         var result = ShellContextMenu.Show(hwnd, targetPath, (int)screen.X, (int)screen.Y, cloudCapable);
         var refreshDir = item is not null ? System.IO.Path.GetDirectoryName(item.Path) : column.Path;
 

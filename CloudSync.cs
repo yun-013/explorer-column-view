@@ -38,8 +38,80 @@ public static class CloudSync
                 && (best is null || root.Path.Length > best.Path.Length))
                 best = root;
         }
-        return best?.Provider;
+        if (best is not null)
+            return best.Provider;
+        return StreamingRootForPath(normalized)?.Provider;
     }
+
+    /// <summary>指定パスが cfapi (SyncRootManager 登録) のクラウド配下かどうか。
+    /// ピン属性でのオフライン切替が効くのはこちらだけ (DriveFS 等の独自 FS には効かない)。</summary>
+    public static bool IsCfapiPath(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return false;
+        var normalized = path.TrimEnd('\\');
+        return Roots.Any(root => IsUnderOrEqual(normalized, root.Path));
+    }
+
+    // ---- ストリーミング型の仮想ドライブ (Google ドライブ / DriveFS 等) ----
+    //
+    // Google ドライブ (Drive for desktop) は Windows 標準の Cloud Files API を使わず、
+    // 独自のファイルシステムで仮想ドライブ (既定 G:) をマウントする。属性にクラウド状態が
+    // 出ないため、代わりに「ディスク上の割り当てサイズ」で判定する:
+    //   サイズ > 0 かつ 割り当て 0 → 実体が無い (オンラインのみ ☁)
+    //   割り当て > 0            → ローカルにキャッシュ済み (✓)
+    // これはメタデータ照会のみでダウンロードを誘発しない。
+
+    private static List<SyncRoot>? _streamingRoots;
+
+    /// <summary>ストリーミング型仮想ドライブのルート一覧。初回に一度だけドライブを走査。</summary>
+    public static IReadOnlyList<SyncRoot> StreamingRoots => _streamingRoots ??= DetectStreamingRoots();
+
+    private static List<SyncRoot> DetectStreamingRoots()
+    {
+        var roots = new List<SyncRoot>();
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (!drive.IsReady)
+                        continue;
+                    var label = drive.VolumeLabel;
+                    if (label.Contains("Google Drive", StringComparison.OrdinalIgnoreCase))
+                        roots.Add(new SyncRoot(drive.RootDirectory.FullName.TrimEnd('\\'), "Google ドライブ"));
+                }
+                catch { /* 準備できていないドライブは飛ばす */ }
+            }
+        }
+        catch { }
+        return roots;
+    }
+
+    private static SyncRoot? StreamingRootForPath(string normalizedPath)
+        => StreamingRoots.FirstOrDefault(root => IsUnderOrEqual(normalizedPath, root.Path));
+
+    /// <summary>パスがストリーミング型仮想ドライブの配下かどうか (列単位で 1 回だけ呼ぶ)。</summary>
+    public static bool IsStreamingPath(string path)
+        => !string.IsNullOrEmpty(path) && StreamingRootForPath(path.TrimEnd('\\')) is not null;
+
+    /// <summary>ストリーミング型ドライブ上のファイルの状態を割り当てサイズから判定する。</summary>
+    public static CloudStatus GetStreamingStatus(string filePath, long length)
+    {
+        if (length == 0)
+            return CloudStatus.Local; // 空ファイルは常に「取得済み」扱い
+        var low = GetCompressedFileSizeW(filePath, out var high);
+        if (low == INVALID_FILE_SIZE && Marshal.GetLastWin32Error() != 0)
+            return CloudStatus.None; // 取得できなければ判定しない
+        var allocated = ((long)high << 32) | low;
+        return allocated == 0 ? CloudStatus.CloudOnly : CloudStatus.Local;
+    }
+
+    private const uint INVALID_FILE_SIZE = 0xFFFFFFFF;
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetCompressedFileSizeW(string lpFileName, out uint lpFileSizeHigh);
 
     /// <summary>path が root と同じか、その配下か (フォルダー境界を尊重して前方一致の誤爆を防ぐ)。</summary>
     private static bool IsUnderOrEqual(string path, string root)

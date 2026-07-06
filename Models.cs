@@ -660,6 +660,10 @@ public class ColumnModel : ObservableObject, IDisposable
         var dir = new DirectoryInfo(path);
         var items = new List<FileSystemItem>();
 
+        // Google ドライブ (DriveFS) 等の非 cfapi 仮想ドライブでは属性にクラウド状態が
+        // 出ないため、割り当てサイズによる判定に切り替える (列単位で 1 回だけ判断)
+        var streaming = CloudSync.IsStreamingPath(path);
+
         foreach (var info in dir.EnumerateFileSystemInfos())
         {
             var attrs = info.Attributes;
@@ -667,14 +671,19 @@ public class ColumnModel : ObservableObject, IDisposable
                 continue;
 
             var isDir = (attrs & FileAttributes.Directory) != 0;
+            var size = isDir ? 0 : (info as FileInfo)?.Length ?? 0;
+            var cloud = FileSystemItem.GetCloudStatus(attrs);
+            if (cloud == CloudStatus.None && streaming && !isDir)
+                cloud = CloudSync.GetStreamingStatus(info.FullName, size);
+
             items.Add(new FileSystemItem
             {
                 Path = info.FullName,
                 Name = info.Name,
                 IsDirectory = isDir,
-                Cloud = FileSystemItem.GetCloudStatus(attrs),
+                Cloud = cloud,
                 Modified = info.LastWriteTime,
-                Size = isDir ? 0 : (info as FileInfo)?.Length ?? 0,
+                Size = size,
             });
         }
 
