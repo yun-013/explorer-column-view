@@ -544,7 +544,7 @@ public partial class QuickLookWindow : Window
         // 他アプリを使った後にプレビューをクリックしてもキーボードフォーカスは
         // 他アプリに残ったままになる。クリックでメインウィンドウを明示的に
         // アクティブ化し、Space / Esc / ↑↓ が再び効くようにする
-        try { (Owner ?? Application.Current.MainWindow)?.Activate(); } catch { }
+        ActivateOwnerAndFocusColumn();
 
         if (e.OriginalSource is DependencyObject src
             && (IsDescendantOf(src, MediaBar) || IsDescendantOf(src, CloseButton)))
@@ -608,9 +608,8 @@ public partial class QuickLookWindow : Window
 
     private void CloseButton_Click(object sender, RoutedEventArgs e)
     {
-        var owner = Owner ?? Application.Current.MainWindow;
         CloseQuickLook();
-        owner?.Activate();
+        ActivateOwnerAndFocusColumn();
     }
 
     /// <summary>プレビューにフォーカスが渡ってしまった場合の保険。Space / Esc で必ず閉じる。</summary>
@@ -619,10 +618,22 @@ public partial class QuickLookWindow : Window
         if (e.Key is Key.Space or Key.Escape)
         {
             e.Handled = true;
-            var owner = Owner ?? Application.Current.MainWindow;
             CloseQuickLook();
-            owner?.Activate();
+            ActivateOwnerAndFocusColumn();
         }
+    }
+
+    /// <summary>メインウィンドウをアクティブ化し、選択中の列にキーボードフォーカスを戻す。
+    /// これをしないと「もう一度プレビューするにはファイルをクリックし直す」羽目になる。</summary>
+    private void ActivateOwnerAndFocusColumn()
+    {
+        try
+        {
+            var owner = Owner ?? Application.Current.MainWindow;
+            owner?.Activate();
+            (owner as MainWindow)?.FocusSelectionColumn();
+        }
+        catch { /* シャットダウン中などは無視 */ }
     }
 
     private const uint MONITOR_DEFAULTTONEAREST = 2;
@@ -692,9 +703,12 @@ public partial class QuickLookWindow : Window
         var next = pos.TotalSeconds;
         if (Math.Abs(Seek.Value - next) > 0.05)
             Seek.Value = next;
-        var text = $"{Fmt(pos)} / {Fmt(MediaView.NaturalDuration.TimeSpan)}";
-        if (TimeText.Text != text)
-            TimeText.Text = text;
+        var cur = Fmt(pos);
+        if (TimeCur.Text != cur)
+            TimeCur.Text = cur;
+        var total = " / " + Fmt(MediaView.NaturalDuration.TimeSpan);
+        if (TimeTotal.Text != total)
+            TimeTotal.Text = total;
     }
 
     private static string Fmt(TimeSpan t) =>

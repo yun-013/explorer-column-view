@@ -9,7 +9,7 @@
 
     <Window.Resources>
         <!-- シークバーのトラック (再生済み / 未再生)。当たり判定は全高、見た目は細いバーだけ。
-             高さ 3 + 半径 1.5 で左右端が完全な半円になる (継ぎ目はつまみが覆う) -->
+             高さ 3 + 半径 1.5 で左右端が完全な半円。バーにホバーすると少し太くなる -->
         <Style x:Key="SeekTrackButton" TargetType="RepeatButton">
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="IsTabStop" Value="False"/>
@@ -17,9 +17,15 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="RepeatButton">
                         <Grid Background="Transparent">
-                            <Border Height="3" CornerRadius="1.5" VerticalAlignment="Center"
+                            <Border x:Name="Bar" Height="3" CornerRadius="1.5" VerticalAlignment="Center"
                                     Background="{TemplateBinding Background}"/>
                         </Grid>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                <Setter TargetName="Bar" Property="Height" Value="4.5"/>
+                                <Setter TargetName="Bar" Property="CornerRadius" Value="2.25"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -53,29 +59,27 @@
             </Setter>
         </Style>
 
-        <!-- つまみ: 普段は控えめな小さい円、ホバー/ドラッグ中は少し大きくなる -->
+        <!-- つまみ: 普段は隠れていて、バーにホバーしたときだけ現れるアクセント色の円
+             (YouTube などのモダンプレイヤーと同じ流儀。線だけのすっきりした見た目を保つ) -->
         <Style x:Key="SeekThumbStyle" TargetType="Thumb">
-            <Setter Property="Width" Value="12"/>
-            <Setter Property="Height" Value="12"/>
+            <Setter Property="Width" Value="14"/>
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="Focusable" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
-                        <Grid>
-                            <Ellipse x:Name="Dot" Width="10" Height="10" Fill="White">
-                                <Ellipse.Effect>
-                                    <DropShadowEffect BlurRadius="4" ShadowDepth="0" Opacity="0.5" Color="Black"/>
-                                </Ellipse.Effect>
-                            </Ellipse>
+                        <Grid Background="Transparent">
+                            <Ellipse x:Name="Dot" Width="11" Height="11" Opacity="0"
+                                     Fill="{DynamicResource AccentBrush}"/>
                         </Grid>
                         <ControlTemplate.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Dot" Property="Width" Value="13"/>
-                                <Setter TargetName="Dot" Property="Height" Value="13"/>
-                            </Trigger>
+                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                <Setter TargetName="Dot" Property="Opacity" Value="1"/>
+                            </DataTrigger>
                             <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Dot" Property="Opacity" Value="1"/>
                                 <Setter TargetName="Dot" Property="Width" Value="13"/>
                                 <Setter TargetName="Dot" Property="Height" Value="13"/>
-                                <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource AccentBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -175,9 +179,12 @@
                     <Button x:Name="PlayPause" DockPanel.Dock="Left"
                             Style="{StaticResource BarIconButton}"
                             Click="PlayPause_Click" Content="&#xE769;"/>
-                    <TextBlock x:Name="TimeText" DockPanel.Dock="Right" Foreground="White"
-                               VerticalAlignment="Center" Margin="10,0,2,0" FontSize="11.5"
-                               Text="0:00 / 0:00"/>
+                    <!-- 時刻: 現在位置は白、全体は薄く (視線が今の位置に行くように) -->
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                VerticalAlignment="Center" Margin="10,0,4,0">
+                        <TextBlock x:Name="TimeCur" Foreground="White" FontSize="11" Text="0:00"/>
+                        <TextBlock x:Name="TimeTotal" Foreground="#8CFFFFFF" FontSize="11" Text=" / 0:00"/>
+                    </StackPanel>
                     <Slider x:Name="Seek" Style="{StaticResource SeekSliderStyle}"
                             VerticalAlignment="Center" Margin="10,0"
                             Minimum="0" Maximum="1"

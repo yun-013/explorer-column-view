@@ -1626,6 +1626,8 @@ public partial class MainWindow : Window
             && _quickLook is { IsVisible: true })
         {
             _quickLook.CloseQuickLook();
+            // 列にフォーカスを戻し、続けて Space で再プレビュー / ↑↓ 移動ができるようにする
+            FocusSelectionColumn();
             e.Handled = true;
             return;
         }
@@ -1755,6 +1757,25 @@ public partial class MainWindow : Window
         => listBox.DataContext is ColumnModel column && _vm.ActiveTab is { } tab
             ? tab.Columns.IndexOf(column)
             : -1;
+
+    /// <summary>選択中の項目がある列 (無ければ最後の列) にキーボードフォーカスを戻す。
+    /// プレビューを閉じた直後や他アプリから戻った直後に呼び、Space / ↑↓ を
+    /// クリック無しで再び効くようにする。</summary>
+    public void FocusSelectionColumn()
+    {
+        if (_vm.ActiveTab is not { } tab || tab.Columns.Count == 0)
+            return;
+        int index = tab.Columns.Count - 1;
+        for (int i = tab.Columns.Count - 1; i >= 0; i--)
+        {
+            if (tab.Columns[i].SelectedItem is not null)
+            {
+                index = i;
+                break;
+            }
+        }
+        FocusColumn(index, selectFirst: false);
+    }
 
     private void FocusColumn(int index, bool selectFirst)
     {
