@@ -7,77 +7,6 @@ using System.Windows.Media.Imaging;
 namespace ColumnView;
 
 /// <summary>
-/// Seer (https://1218.io) 連携。
-/// 公式SDK (ccseer/Seer-sdk seer/ipc.h) の WM_COPYDATA プロトコルを使用する。
-/// </summary>
-public static class SeerInterop
-{
-    private const string SeerClassName = "SeerWindowClass";
-    private const int SEER_INVOKE_W32 = 5000;
-    private const uint WM_COPYDATA = 0x004A;
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct COPYDATASTRUCT
-    {
-        public nint dwData;
-        public int cbData;
-        public nint lpData;
-    }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern nint FindWindow(string lpClassName, string? lpWindowName);
-
-    [DllImport("user32.dll")]
-    private static extern nint SendMessage(nint hWnd, uint msg, nint wParam, ref COPYDATASTRUCT lParam);
-
-    [DllImport("user32.dll")]
-    private static extern bool IsWindowVisible(nint hWnd);
-
-    private static DateTime _lastInvoke = DateTime.MinValue;
-
-    public static bool IsRunning => FindWindow(SeerClassName, null) != 0;
-
-    public static bool IsPreviewVisible
-    {
-        get
-        {
-            var hwnd = FindWindow(SeerClassName, null);
-            return hwnd != 0 && IsWindowVisible(hwnd);
-        }
-    }
-
-    /// <summary>プレビューのトグル。同じパスなら閉じ、別のパスなら切り替わる。</summary>
-    public static bool Toggle(string path)
-    {
-        var hwnd = FindWindow(SeerClassName, null);
-        if (hwnd == 0)
-            return false;
-
-        // ipc.h: SEER_INVOKE_* の最小間隔は 200ms
-        if ((DateTime.UtcNow - _lastInvoke).TotalMilliseconds < 200)
-            return true;
-        _lastInvoke = DateTime.UtcNow;
-
-        var ptr = Marshal.StringToHGlobalUni(path);
-        try
-        {
-            var cds = new COPYDATASTRUCT
-            {
-                dwData = SEER_INVOKE_W32,
-                cbData = (path.Length + 1) * 2,
-                lpData = ptr,
-            };
-            SendMessage(hwnd, WM_COPYDATA, 0, ref cds);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(ptr);
-        }
-        return true;
-    }
-}
-
-/// <summary>
 /// SHGetFileInfo によるファイルアイコン取得。拡張子単位でキャッシュし、
 /// SHGFI_USEFILEATTRIBUTES を使うことでクラウドのオンライン専用ファイルに
 /// 触れない（ダウンロードを誘発しない)。
@@ -103,7 +32,7 @@ public static class IconCache
     private static extern bool DestroyIcon(nint hIcon);
 
     private const uint SHGFI_ICON = 0x100;
-    private const uint SHGFI_SMALLICON = 0x1;
+    private const uint SHGFI_LARGEICON = 0x0; // 32px。行は 24px 表示なので縮小方向になり滲まない
     private const uint SHGFI_USEFILEATTRIBUTES = 0x10;
     private const uint SHGFI_TYPENAME = 0x400;
     private const uint FILE_ATTRIBUTE_DIRECTORY = 0x10;
@@ -171,7 +100,7 @@ public static class IconCache
     private static ImageSource? Load(string path, uint attributes, uint extraFlags)
     {
         var shfi = new SHFILEINFO();
-        var result = SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_ICON | SHGFI_SMALLICON | extraFlags);
+        var result = SHGetFileInfo(path, attributes, ref shfi, (uint)Marshal.SizeOf<SHFILEINFO>(), SHGFI_ICON | SHGFI_LARGEICON | extraFlags);
         if (result == 0 || shfi.hIcon == 0)
             return null;
         try

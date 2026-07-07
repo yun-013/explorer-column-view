@@ -25,6 +25,22 @@ public partial class App : Application
         _ = Task.Run(FileOps.PurgeAllTrashRoots);
     }
 
+    protected override void OnExit(ExitEventArgs e)
+    {
+        base.OnExit(e);
+        // 終了保険: メディア基盤 (MF) やシェル拡張・WinRT が残したスレッドが
+        // プロセスを生かし続けると「ウィンドウは無いのに exe がロックされたまま」になる。
+        // 正常なら OnExit 後すぐプロセスは消える (このスレッドは background なので
+        // 終了を妨げない)。3 秒経っても生きていたら強制的に自決する。
+        var watchdog = new Thread(() =>
+        {
+            Thread.Sleep(3000);
+            Environment.Exit(e.ApplicationExitCode);
+        })
+        { IsBackground = true, Name = "ExitWatchdog" };
+        watchdog.Start();
+    }
+
     // ---- テーマ (ライト / ダーク) ----
 
     /// <summary>システム設定 (アプリのモード) を読み、対応するパレットを適用する。

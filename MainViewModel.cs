@@ -678,7 +678,6 @@ public class MainViewModel : ObservableObject
 
     // ---- タブ・ナビゲーション ----
 
-    private string? _lastPreviewPath;
     private bool _navigating;
 
     /// <summary>タブが 0 個になったとき (最後のタブを閉じた / 引き剝がした) に発火。</summary>
@@ -866,13 +865,13 @@ public class MainViewModel : ObservableObject
                 : $"{item.Name}  ({FormatSize(item.Size)})";
         }
 
-        // Seer のプレビューが開いていれば選択に追従させる (Files と同じ方式)
-        if (SeerInterop.IsPreviewVisible && _lastPreviewPath != item.Path)
-        {
-            SeerInterop.Toggle(item.Path);
-            _lastPreviewPath = item.Path;
-        }
+        // プレビュー (Quick Look) が開いていれば選択に追従させる。
+        // 実際の追従は View 側 (MainWindow) が SelectionChanged で行う。
+        PreviewFollow?.Invoke(item);
     }
+
+    /// <summary>Quick Look が開いているとき、選択変更を View に伝えて追従させる。</summary>
+    public Action<FileSystemItem>? PreviewFollow { get; set; }
 
     /// <summary>複数選択時: 子の列を畳んで件数を表示する。</summary>
     public void OnMultiSelect(ColumnModel column, int count)
@@ -884,18 +883,6 @@ public class MainViewModel : ObservableObject
             return;
         TrimColumns(tab, index + 1);
         StatusText = $"{count} 個を選択";
-    }
-
-    public void TogglePreview(FileSystemItem? item)
-    {
-        if (item is null)
-            return;
-        if (!SeerInterop.Toggle(item.Path))
-        {
-            StatusText = "Seer が起動していません。Seer を起動するとスペースキーでプレビューできます。";
-            return;
-        }
-        _lastPreviewPath = item.Path;
     }
 
     public void OpenItem(FileSystemItem? item)

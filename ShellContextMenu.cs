@@ -10,6 +10,8 @@ public enum ShellMenuResult
     Rename,         // 「名前の変更」が選ばれた (アプリ側で処理)
     AddFavorite,    // 独自項目: お気に入り
     CopyPath,       // 独自項目: パスをコピー
+    MakeOffline,    // 独自項目: 常にこのデバイスに保持 (📌)
+    MakeOnline,     // 独自項目: オンラインのみ (☁ 空き容量を確保)
 }
 
 /// <summary>
@@ -21,8 +23,10 @@ public static class ShellContextMenu
     // 独自に追加するメニュー項目 (シェルの ID 範囲 1..0x7FFF と衝突しない値)
     private const uint IdFavorite = 0x9001;
     private const uint IdCopyPath = 0x9002;
+    private const uint IdMakeOffline = 0x9003;
+    private const uint IdMakeOnline = 0x9004;
 
-    public static ShellMenuResult Show(IntPtr hwnd, string path, int screenX, int screenY)
+    public static ShellMenuResult Show(IntPtr hwnd, string path, int screenX, int screenY, bool cloudCapable = false)
     {
         var iidShellFolder = new Guid("000214E6-0000-0000-C000-000000000046");
         var iidContextMenu = new Guid("000214E4-0000-0000-C000-000000000046");
@@ -57,6 +61,12 @@ public static class ShellContextMenu
 
             // 独自項目を末尾に追加
             AppendMenu(hMenu, 0x800 /*MF_SEPARATOR*/, IntPtr.Zero, null);
+            if (cloudCapable)
+            {
+                AppendMenu(hMenu, 0, (IntPtr)IdMakeOffline, "常にこのデバイスに保持");
+                AppendMenu(hMenu, 0, (IntPtr)IdMakeOnline, "オンラインのみにする (空き容量を増やす)");
+                AppendMenu(hMenu, 0x800, IntPtr.Zero, null);
+            }
             AppendMenu(hMenu, 0 /*MF_STRING*/, (IntPtr)IdFavorite, "お気に入りに追加 / 削除");
             AppendMenu(hMenu, 0, (IntPtr)IdCopyPath, "パスをコピー");
 
@@ -107,6 +117,10 @@ public static class ShellContextMenu
                 return ShellMenuResult.AddFavorite;
             if (cmd == IdCopyPath)
                 return ShellMenuResult.CopyPath;
+            if (cmd == IdMakeOffline)
+                return ShellMenuResult.MakeOffline;
+            if (cmd == IdMakeOnline)
+                return ShellMenuResult.MakeOnline;
 
             // 「名前の変更」はホストにビューが無いとシェル側で機能しないのでアプリで処理
             var verb = GetVerb(menu, cmd - idFirst);

@@ -143,6 +143,22 @@ public class FileSystemItem : ObservableObject
     public bool WantsRealIcon => !UseRealIcon && !IsDirectory && Cloud != CloudStatus.CloudOnly
         && PerFileIconExtensions.Contains(System.IO.Path.GetExtension(Name));
 
+    /// <summary>行に実サムネイルを出す型 (画像・動画・PDF・Office など「絵が出せる」もの)。</summary>
+    private static readonly HashSet<string> ThumbnailExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp", ".heic", ".heif", ".svg",
+        ".psd", ".ai", ".raw", ".cr2", ".nef", ".arw", ".dng",
+        ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".m4v",
+        ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx",
+    };
+
+    /// <summary>サムネイルの要求サイズ (px)。行アイコンより少し大きめに取り縮小表示する。</summary>
+    public const int ThumbnailSize = 48;
+
+    /// <summary>実サムネイルを読み込むべきか。クラウド専用は対象外 (ダウンロード回避)。</summary>
+    public bool WantsThumbnail => !UseRealIcon && !IsDirectory && Cloud != CloudStatus.CloudOnly
+        && ThumbnailExtensions.Contains(System.IO.Path.GetExtension(Name));
+
     /// <summary>コピー / 切り取りの視覚状態。クリップボードが変わったら戻す。
     /// マーク中はクラウドバッジより優先して表示する (一時的な状態なので)。</summary>
     private ClipboardMarkKind _clipMark;
@@ -213,6 +229,59 @@ public class FileSystemItem : ObservableObject
     public Visibility TypeRowVisibility => IsDirectory ? Visibility.Collapsed : Visibility.Visible;
 
     public string ModifiedText => Modified.ToString("yyyy/MM/dd HH:mm");
+
+    /// <summary>クラウドプロバイダ名 (OneDrive / Google ドライブ 等)。該当しなければ null。</summary>
+    public string? ProviderName => CloudSync.ProviderForPath(Path);
+    public Visibility ProviderRowVisibility => string.IsNullOrEmpty(ProviderName) ? Visibility.Collapsed : Visibility.Visible;
+
+    // ---- 追加メタ情報 (画像の寸法・動画/音声の長さ)。ホバー時に一度だけ取得 ----
+
+    private string? _metaLabel;
+    private string? _metaValue;
+    private bool _metaComputed;
+    public string? MetaLabel => _metaLabel;
+    public string? MetaValue => _metaValue;
+    public Visibility MetaRowVisibility => string.IsNullOrEmpty(_metaValue) ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>寸法 / 長さをバックグラウンドで取得する (ホバー時に一度だけ)。</summary>
+    public async Task EnsureMetadataAsync(CancellationToken ct)
+    {
+        if (IsDirectory || _metaComputed)
+            return;
+        _metaComputed = true;
+        // クラウド専用ファイルは実体に触れない
+        if (Cloud == CloudStatus.CloudOnly)
+            return;
+
+        string? label = null, value = null;
+        try
+        {
+            if (ShellMetadata.IsImage(Name))
+            {
+                label = "寸法";
+                value = await Task.Run(() => ShellMetadata.ImageDimensions(Path), ct);
+            }
+            else if (ShellMetadata.IsMedia(Name))
+            {
+                label = "長さ";
+                value = await Task.Run(() => ShellMetadata.MediaDuration(Path), ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _metaComputed = false; // 次回ホバーで再取得
+            return;
+        }
+        catch { /* 取れなくても無視 */ }
+
+        if (string.IsNullOrEmpty(value))
+            return;
+        _metaLabel = label;
+        _metaValue = value;
+        Raise(nameof(MetaLabel));
+        Raise(nameof(MetaValue));
+        Raise(nameof(MetaRowVisibility));
+    }
 
     private string _folderSizeText = "計算中…";
     private bool _folderSizeComputed;
@@ -535,21 +604,35 @@ public class ColumnModel : ObservableObject, IDisposable
         SearchCts?.Cancel();
     }
 
-    /// <summary>表示中ファイルの実アイコンをバックグラウンドで読み込み、順次差し替える。</summary>
+    /// <summary>
+    /// 表示中ファイルの実アイコン / サムネイルをバックグラウンドで読み込み、順次差し替える。
+    /// クラウド専用ファイルは WantsThumbnail の段階で除外済みなので、ここでの取得が
+    /// ダウンロードを誘発することはない (ローカル実体からの抽出のみ)。
+    /// 少数ずつ並行してシェルに問い合わせ、UI スレッドへの往復回数も抑える。
+    /// </summary>
     private async Task LoadIconsAsync(CancellationToken ct)
     {
-        foreach (var item in Items.Where(i => i.WantsRealIcon).ToList())
+        var pending = Items.Where(i => i.WantsRealIcon || i.WantsThumbnail).ToList();
+        const int lanes = 3;
+        for (int i = 0; i < pending.Count; i += lanes)
         {
             if (ct.IsCancellationRequested)
                 return;
-            var path = item.Path;
+            var batch = pending.Skip(i).Take(lanes)
+                .Select(item => Task.Run(() => (item, image: item.WantsThumbnail
+                    ? ShellThumbnail.Get(item.Path, FileSystemItem.ThumbnailSize, item.Modified.Ticks, allowDownload: true)
+                    : IconCache.GetByPath(item.Path)), ct))
+                .ToList();
             try
             {
-                var icon = await Task.Run(() => IconCache.GetByPath(path), ct).ConfigureAwait(true);
-                if (ct.IsCancellationRequested)
-                    return;
-                if (icon is not null)
-                    item.ApplyRealIcon(icon);
+                foreach (var task in batch)
+                {
+                    var (item, image) = await task.ConfigureAwait(true);
+                    if (ct.IsCancellationRequested)
+                        return;
+                    if (image is not null)
+                        item.ApplyRealIcon(image);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -577,6 +660,10 @@ public class ColumnModel : ObservableObject, IDisposable
         var dir = new DirectoryInfo(path);
         var items = new List<FileSystemItem>();
 
+        // Google ドライブ (DriveFS) 等の非 cfapi 仮想ドライブでは属性にクラウド状態が
+        // 出ないため、割り当てサイズによる判定に切り替える (列単位で 1 回だけ判断)
+        var streaming = CloudSync.IsStreamingPath(path);
+
         foreach (var info in dir.EnumerateFileSystemInfos())
         {
             var attrs = info.Attributes;
@@ -584,14 +671,19 @@ public class ColumnModel : ObservableObject, IDisposable
                 continue;
 
             var isDir = (attrs & FileAttributes.Directory) != 0;
+            var size = isDir ? 0 : (info as FileInfo)?.Length ?? 0;
+            var cloud = FileSystemItem.GetCloudStatus(attrs);
+            if (cloud == CloudStatus.None && streaming && !isDir)
+                cloud = CloudSync.GetStreamingStatus(info.FullName, size);
+
             items.Add(new FileSystemItem
             {
                 Path = info.FullName,
                 Name = info.Name,
                 IsDirectory = isDir,
-                Cloud = FileSystemItem.GetCloudStatus(attrs),
+                Cloud = cloud,
                 Modified = info.LastWriteTime,
-                Size = isDir ? 0 : (info as FileInfo)?.Length ?? 0,
+                Size = size,
             });
         }
 
@@ -677,10 +769,15 @@ public class ColumnModel : ObservableObject, IDisposable
             }
         }
 
+        var addedPaths = new HashSet<string>(
+            items.Select(i => i.Path.TrimEnd('\\')), StringComparer.OrdinalIgnoreCase);
+
         void AddKnown(string name, string? path)
         {
             if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
                 return;
+            if (!addedPaths.Add(path.TrimEnd('\\')))
+                return; // 既に追加済み (お気に入り・別プロバイダ等と重複しない)
             items.Add(new FileSystemItem
             {
                 Path = path,
@@ -695,6 +792,11 @@ public class ColumnModel : ObservableObject, IDisposable
         AddKnown("ドキュメント", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         AddKnown("ピクチャ", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
         AddKnown("ホーム", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+
+        // クラウド同期ルート (OneDrive / Google ドライブ / Nextcloud / Dropbox 等) を
+        // プロバイダ非依存に列挙して並べる。SyncRootManager に無い場合は OneDrive を環境変数で補う。
+        foreach (var root in CloudSync.Roots)
+            AddKnown(root.Provider, root.Path);
 
         var oneDrive = Environment.GetEnvironmentVariable("OneDrive")
             ?? Environment.GetEnvironmentVariable("OneDriveConsumer")

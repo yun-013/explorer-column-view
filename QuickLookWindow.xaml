@@ -1,0 +1,235 @@
+<Window x:Class="ColumnView.QuickLookWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
+        Topmost="True" SnapsToDevicePixels="True" UseLayoutRounding="True"
+        WindowStartupLocation="Manual"
+        FontFamily="{DynamicResource {x:Static SystemFonts.MessageFontFamilyKey}}"
+        PreviewKeyDown="QuickLookWindow_PreviewKeyDown">
+
+    <Window.Resources>
+        <!-- シークバーのトラック (再生済み / 未再生)。当たり判定は全高、見た目は細いバーだけ。
+             高さ 3 + 半径 1.5 で左右端が完全な半円。バーにホバーすると少し太くなる -->
+        <Style x:Key="SeekTrackButton" TargetType="RepeatButton">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RepeatButton">
+                        <Grid Background="Transparent">
+                            <Border x:Name="Bar" Height="3" CornerRadius="1.5" VerticalAlignment="Center"
+                                    Background="{TemplateBinding Background}"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                <Setter TargetName="Bar" Property="Height" Value="4.5"/>
+                                <Setter TargetName="Bar" Property="CornerRadius" Value="2.25"/>
+                            </DataTrigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- 再生バーのアイコンボタン (再生/一時停止): 丸いハイライトでホバー -->
+        <Style x:Key="BarIconButton" TargetType="Button">
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="14">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#2EFFFFFF"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#45FFFFFF"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- つまみ: YouTube と同じく常時表示のアクセント色の円。ホバー/ドラッグ中は全方向に少し
+             大きくなる。箱 (14) も円 (10/12) も偶数サイズで揃え、UseLayoutRounding 環境で
+             奇数サイズ (半端な余白=1.5px 等) が片側に寄って丸められるのを避け、常に中心を保つ -->
+        <Style x:Key="SeekThumbStyle" TargetType="Thumb">
+            <Setter Property="Width" Value="14"/>
+            <Setter Property="Height" Value="14"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Thumb">
+                        <Grid Background="Transparent">
+                            <Ellipse x:Name="Dot" Width="10" Height="10"
+                                     HorizontalAlignment="Center" VerticalAlignment="Center"
+                                     Fill="{DynamicResource AccentBrush}"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=Slider}}" Value="True">
+                                <Setter TargetName="Dot" Property="Width" Value="12"/>
+                                <Setter TargetName="Dot" Property="Height" Value="12"/>
+                            </DataTrigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="Dot" Property="Width" Value="12"/>
+                                <Setter TargetName="Dot" Property="Height" Value="12"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- シークバー本体。再生済み側はアクセントカラー、残りは薄い白 -->
+        <Style x:Key="SeekSliderStyle" TargetType="Slider">
+            <Setter Property="Height" Value="20"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <!-- クリック時のジャンプはコード側 (Seek_PreviewMouseLeftButtonDown) で
+                             位置から直接計算する。LargeChange コマンドだと 1 秒しか動かない -->
+                        <Track x:Name="PART_Track">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Style="{StaticResource SeekTrackButton}"
+                                              Background="{DynamicResource AccentBrush}"/>
+                            </Track.DecreaseRepeatButton>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Style="{StaticResource SeekTrackButton}"
+                                              Background="#40FFFFFF"/>
+                            </Track.IncreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource SeekThumbStyle}"/>
+                            </Track.Thumb>
+                        </Track>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!-- 影のための余白。中身だけを角丸で見せる (タイトルバー・枠は一切なし) -->
+    <Border x:Name="Card" Margin="18" CornerRadius="12"
+            Background="{DynamicResource SurfaceBrush}"
+            SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged"
+            MouseEnter="Card_MouseEnter" MouseLeave="Card_MouseLeave">
+        <Border.Effect>
+            <DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.32" Color="Black"/>
+        </Border.Effect>
+
+        <Grid x:Name="Host" ClipToBounds="True">
+            <!-- 画像 / シェルの大サムネイル (フォールバック) -->
+            <Image x:Name="ImageView" Stretch="Uniform" Visibility="Collapsed"
+                   RenderOptions.BitmapScalingMode="HighQuality"/>
+
+            <!-- テキスト / コード -->
+            <ScrollViewer x:Name="TextScroll" Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Auto" Padding="18,14">
+                <TextBlock x:Name="TextView" FontFamily="Consolas, ui-monospace, monospace"
+                           FontSize="12.5" TextWrapping="NoWrap"
+                           Foreground="{DynamicResource TextPrimaryBrush}"/>
+            </ScrollViewer>
+
+            <!-- Markdown (整形表示) -->
+            <FlowDocumentScrollViewer x:Name="DocView" Visibility="Collapsed"
+                                      VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled"
+                                      Focusable="False"
+                                      Foreground="{DynamicResource TextPrimaryBrush}"/>
+
+            <!-- PDF (ページを画像にレンダリングして縦に並べる) -->
+            <ScrollViewer x:Name="PdfScroll" Visibility="Collapsed"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled" Padding="10">
+                <StackPanel x:Name="PdfPages"/>
+            </ScrollViewer>
+
+            <!-- 動画 / 音声 -->
+            <MediaElement x:Name="MediaView" Visibility="Collapsed"
+                          LoadedBehavior="Manual" UnloadedBehavior="Stop"
+                          Stretch="Uniform" ScrubbingEnabled="True"
+                          MediaOpened="MediaView_MediaOpened"
+                          MediaEnded="MediaView_MediaEnded"
+                          MediaFailed="MediaView_MediaFailed"/>
+
+            <!-- 音声のときの見出し (中身が真っ黒にならないように) -->
+            <StackPanel x:Name="AudioGlyph" Visibility="Collapsed"
+                        HorizontalAlignment="Center" VerticalAlignment="Center">
+                <TextBlock FontFamily="{StaticResource IconFont}" FontSize="72"
+                           Text="&#xE8D6;" HorizontalAlignment="Center"
+                           Foreground="{DynamicResource TextSecondaryBrush}"/>
+                <TextBlock x:Name="AudioName" Margin="0,14,0,0" FontSize="14"
+                           HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           MaxWidth="360" Foreground="{DynamicResource TextPrimaryBrush}"/>
+            </StackPanel>
+
+            <!-- ホバー時だけ現れる操作バー (動画・音声のシーク)。
+                 YouTube と同じく背景の箱は持たず、下端の薄いグラデーションの上に
+                 シークバーと操作行を直接乗せるだけの構成 -->
+            <Grid x:Name="MediaBar" VerticalAlignment="Bottom" Visibility="Collapsed" Opacity="0">
+                <Rectangle Height="84" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                    <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#9E000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Rectangle.Fill>
+                </Rectangle>
+
+                <StackPanel VerticalAlignment="Bottom">
+                    <!-- シークバーは下の操作行より少し内側に絞り、端に張り付かないようにする -->
+                    <Slider x:Name="Seek" Style="{StaticResource SeekSliderStyle}"
+                            Margin="14,0,14,0"
+                            Minimum="0" Maximum="1"
+                            Thumb.DragStarted="Seek_DragStarted"
+                            Thumb.DragCompleted="Seek_DragCompleted"
+                            PreviewMouseLeftButtonDown="Seek_PreviewMouseLeftButtonDown"/>
+
+                    <DockPanel LastChildFill="False" Margin="10,0,14,9">
+                        <Button x:Name="PlayPause" DockPanel.Dock="Left"
+                                Style="{StaticResource BarIconButton}"
+                                Click="PlayPause_Click" Content="&#xE769;"/>
+                        <!-- 時刻: 現在位置は白、全体は薄く (視線が今の位置に行くように) -->
+                        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal"
+                                    VerticalAlignment="Center" Margin="6,0,0,0">
+                            <TextBlock x:Name="TimeCur" Foreground="White" FontSize="11" Text="0:00"/>
+                            <TextBlock x:Name="TimeTotal" Foreground="#8CFFFFFF" FontSize="11" Text=" / 0:00"/>
+                        </StackPanel>
+                    </DockPanel>
+                </StackPanel>
+            </Grid>
+
+            <!-- ホバー時だけ現れる閉じるボタン (唯一の装飾)。 -->
+            <Button x:Name="CloseButton" Width="28" Height="28" Margin="10"
+                    HorizontalAlignment="Right" VerticalAlignment="Top"
+                    Opacity="0" IsHitTestVisible="False" Cursor="Hand"
+                    Click="CloseButton_Click" FontFamily="{StaticResource IconFont}"
+                    FontSize="10" Content="&#xE8BB;">
+                <Button.Template>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="#CC1A1A1A" CornerRadius="14">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                              TextElement.Foreground="White"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FFE0553F"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Button.Template>
+            </Button>
+        </Grid>
+    </Border>
+</Window>
