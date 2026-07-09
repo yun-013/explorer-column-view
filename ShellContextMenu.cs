@@ -215,7 +215,7 @@ public static class ShellContextMenu
     {
         [PreserveSig] int QueryContextMenu(IntPtr hmenu, uint indexMenu, uint idCmdFirst, uint idCmdLast, uint uFlags);
         [PreserveSig] int InvokeCommand(ref CMINVOKECOMMANDINFO pici);
-        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType, IntPtr pReserved, [Out] byte[] pszName, uint cchMax);
+        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType, IntPtr pReserved, [Out, MarshalAs(UnmanagedType.LPArray)] byte[] pszName, uint cchMax);
     }
 
     [ComImport, Guid("000214F4-0000-0000-C000-000000000046"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -223,7 +223,7 @@ public static class ShellContextMenu
     {
         [PreserveSig] int QueryContextMenu(IntPtr hmenu, uint indexMenu, uint idCmdFirst, uint idCmdLast, uint uFlags);
         [PreserveSig] int InvokeCommand(ref CMINVOKECOMMANDINFO pici);
-        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType, IntPtr pReserved, [Out] byte[] pszName, uint cchMax);
+        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType, IntPtr pReserved, [Out, MarshalAs(UnmanagedType.LPArray)] byte[] pszName, uint cchMax);
         [PreserveSig] int HandleMenuMsg(uint uMsg, IntPtr wParam, IntPtr lParam);
     }
 
@@ -232,7 +232,7 @@ public static class ShellContextMenu
     {
         [PreserveSig] int QueryContextMenu(IntPtr hmenu, uint indexMenu, uint idCmdFirst, uint idCmdLast, uint uFlags);
         [PreserveSig] int InvokeCommand(ref CMINVOKECOMMANDINFO pici);
-        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType, IntPtr pReserved, [Out] byte[] pszName, uint cchMax);
+        [PreserveSig] int GetCommandString(UIntPtr idCmd, uint uType, IntPtr pReserved, [Out, MarshalAs(UnmanagedType.LPArray)] byte[] pszName, uint cchMax);
         [PreserveSig] int HandleMenuMsg(uint uMsg, IntPtr wParam, IntPtr lParam);
         [PreserveSig] int HandleMenuMsg2(uint uMsg, IntPtr wParam, IntPtr lParam, out IntPtr plResult);
     }
