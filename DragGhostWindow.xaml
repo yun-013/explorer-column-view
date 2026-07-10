@@ -1,0 +1,68 @@
+<Window x:Class="ColumnView.DragGhostWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="Transparent"
+        ShowInTaskbar="False"
+        ShowActivated="False"
+        Topmost="True"
+        Focusable="False"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        Opacity="0.92"
+        FontFamily="{DynamicResource {x:Static SystemFonts.MessageFontFamilyKey}}"
+        FontSize="12">
+    <!-- 外周の余白: バッジ (右上へ 8px はみ出す) と重なりカード (右下へ 8px ずれる) の逃げ場。
+         これが無いと SizeToContent のウィンドウ境界でクリップされて欠ける -->
+    <Grid Margin="10,10,14,14">
+        <!-- 複数選択時: 後ろに重なって見えるカード (奥から手前へ) -->
+        <Border x:Name="Stack2"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderSoftBrush}"
+                BorderThickness="1" CornerRadius="8" Opacity="0.5"
+                Visibility="Collapsed">
+            <Border.RenderTransform>
+                <TranslateTransform X="8" Y="8"/>
+            </Border.RenderTransform>
+        </Border>
+        <Border x:Name="Stack1"
+                Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource BorderSoftBrush}"
+                BorderThickness="1" CornerRadius="8" Opacity="0.75"
+                Visibility="Collapsed">
+            <Border.RenderTransform>
+                <TranslateTransform X="4" Y="4"/>
+            </Border.RenderTransform>
+        </Border>
+        <!-- 掴んでいる項目本体 -->
+        <Border Background="{DynamicResource SurfaceBrush}"
+                BorderBrush="{DynamicResource AccentDropBorderBrush}"
+                BorderThickness="1"
+                CornerRadius="8"
+                Padding="8,6"
+                Effect="{DynamicResource MenuShadow}">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <Image x:Name="IconImage" Width="20" Height="20" Margin="0,0,6,0" Stretch="Uniform"/>
+                <TextBlock x:Name="NameText" VerticalAlignment="Center"
+                           Foreground="{DynamicResource TextPrimaryBrush}"
+                           MaxWidth="240" TextTrimming="CharacterEllipsis"/>
+            </StackPanel>
+        </Border>
+        <!-- 複数選択時の件数バッジ (カードの右上角に重ねる) -->
+        <Border x:Name="CountBadge"
+                Background="{DynamicResource AccentBrush}"
+                BorderBrush="{DynamicResource SurfaceBrush}"
+                BorderThickness="1.5"
+                CornerRadius="10"
+                MinWidth="20" Height="20"
+                HorizontalAlignment="Right" VerticalAlignment="Top"
+                Margin="0,-8,-8,0"
+                Padding="5,0"
+                Visibility="Collapsed">
+            <TextBlock x:Name="CountText"
+                       Foreground="White" FontSize="11" FontWeight="SemiBold"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        </Border>
+    </Grid>
+</Window>

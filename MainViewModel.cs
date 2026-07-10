@@ -1133,9 +1133,12 @@ public class MainViewModel : ObservableObject
         PushTransferUndo(performed, copy);
         if (error is not null)
             StatusText = error;
-        else
+        else if (performed.Count > 0)
             StatusText = copy ? $"コピーしました → {targetDir}" : $"移動しました → {targetDir}";
-        await RefreshColumnsAsync(affected);
+        // 実際に何か動いたときだけ再読込する。同じフォルダへの移動などの no-op で
+        // 列を作り直すと、ドラッグ前の複数選択が単一復元に潰れてしまう
+        if (performed.Count > 0)
+            await RefreshColumnsAsync(affected);
     }
 
     /// <summary>指定フォルダを表示している列を再読み込みする (選択は保持)。</summary>
