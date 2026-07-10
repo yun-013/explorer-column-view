@@ -178,8 +178,12 @@ public partial class MainWindow : Window
     private static extern bool RemoveClipboardFormatListener(nint hwnd);
 
     private const int WM_CLIPBOARDUPDATE = 0x031D;
+    private const int WM_MOUSEWHEEL = 0x020A;
     private const int WM_MOUSEHWHEEL = 0x020E;
     private const int WM_SETTINGCHANGE = 0x001A;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern short GetKeyState(int nVirtKey);
 
     /// <summary>全ウィンドウの表示にコピー / 切り取りマークを反映する。</summary>
     private static void RefreshClipboardMarksAllWindows()
@@ -610,6 +614,9 @@ public partial class MainWindow : Window
     {
         _quickLook?.Close();
         _quickLook = null;
+        _dragGhost?.Close();
+        _dragGhost = null;
+        StopDragWheelHook();
         if (new WindowInteropHelper(this).Handle is var hwnd && hwnd != 0)
             RemoveClipboardFormatListener(hwnd);
         CompositionTarget.Rendering -= DragTick;
@@ -1089,6 +1096,7 @@ public partial class MainWindow : Window
     private bool _isDragging;
     private ListBoxItem? _dropHighlight;
     private ListBoxItem? _insertIndicator;
+    private DragGhostWindow? _dragGhost;
 
     private enum GroupDropMode { None, Before, After, Onto }
 
@@ -1153,19 +1161,19 @@ public partial class MainWindow : Window
 
         // グループ見出し / メンバー / お気に入り: すべて統一並べ替え (HomeFormat、キーで運ぶ)。
         // ドロップ先の列がコンテナ (ホーム列 or グループ列) を決める。
-        if (_groupDragCandidate is { GroupId: { } gid })
+        if (_groupDragCandidate is { GroupId: { } gid } group)
         {
-            RunReorderDrag(sender, new DataObject(HomeFormat, "group:" + gid));
+            RunReorderDrag(sender, new DataObject(HomeFormat, "group:" + gid), group, GrabOffsetFor(sender, group, e));
             return;
         }
         if (_memberDragCandidate is { } member)
         {
-            RunReorderDrag(sender, new DataObject(HomeFormat, member.Path));
+            RunReorderDrag(sender, new DataObject(HomeFormat, member.Path), member, GrabOffsetFor(sender, member, e));
             return;
         }
         if (_favDragCandidate is { } fav)
         {
-            RunReorderDrag(sender, new DataObject(HomeFormat, fav.Path));
+            RunReorderDrag(sender, new DataObject(HomeFormat, fav.Path), fav, GrabOffsetFor(sender, fav, e));
             return;
         }
 
@@ -1184,13 +1192,21 @@ public partial class MainWindow : Window
             return;
 
         var data = new DataObject(DataFormats.FileDrop, paths);
+        var src = (DependencyObject)sender;
         _isDragging = true;
+        DragDrop.AddGiveFeedbackHandler(src, DragSource_GiveFeedback);
+        ShowDragGhost(_dragCandidate.Icon, _dragCandidate.Name, paths.Length,
+                      GrabOffsetFor(sender, _dragCandidate, e));
+        StartDragWheelHook();
         try
         {
-            DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Copy | DragDropEffects.Move);
+            DragDrop.DoDragDrop(src, data, DragDropEffects.Copy | DragDropEffects.Move);
         }
         finally
         {
+            StopDragWheelHook();
+            DragDrop.RemoveGiveFeedbackHandler(src, DragSource_GiveFeedback);
+            HideDragGhost();
             _isDragging = false;
             _dragCandidate = null;
             _reclickItem = null;
@@ -1198,15 +1214,22 @@ public partial class MainWindow : Window
     }
 
     /// <summary>並べ替え系ドラッグ (お気に入り / グループ / メンバー) の共通処理。</summary>
-    private void RunReorderDrag(object sender, DataObject data)
+    private void RunReorderDrag(object sender, DataObject data, FileSystemItem item, Point grabOffset)
     {
+        var src = (DependencyObject)sender;
         _isDragging = true;
+        DragDrop.AddGiveFeedbackHandler(src, DragSource_GiveFeedback);
+        ShowDragGhost(item.Icon, item.Name, 1, grabOffset);
+        StartDragWheelHook();
         try
         {
-            DragDrop.DoDragDrop((DependencyObject)sender, data, DragDropEffects.Move);
+            DragDrop.DoDragDrop(src, data, DragDropEffects.Move);
         }
         finally
         {
+            StopDragWheelHook();
+            DragDrop.RemoveGiveFeedbackHandler(src, DragSource_GiveFeedback);
+            HideDragGhost();
             _isDragging = false;
             _favDragCandidate = null;
             _groupDragCandidate = null;
@@ -1217,8 +1240,181 @@ public partial class MainWindow : Window
         }
     }
 
+    // ---- ドラッグゴースト (カーソル追従のプレビュー) ----
+
+    /// <summary>行内のどこを掴んだか (行の左上からの位置)。ゴーストをこの点がカーソル直下に
+    /// 来るよう配置すると「行をそのまま持ち上げた」ように見える。</summary>
+    private static Point GrabOffsetFor(object sender, FileSystemItem item, MouseEventArgs e)
+    {
+        if (sender is ListBox lb
+            && lb.ItemContainerGenerator.ContainerFromItem(item) is ListBoxItem container)
+        {
+            var p = e.GetPosition(container);
+            if (p.X >= 0 && p.Y >= 0 && p.X <= container.ActualWidth && p.Y <= container.ActualHeight)
+                return p;
+        }
+        return new Point(36, 14); // 行が特定できないときはカード左上寄りを掴んだ扱い
+    }
+
+    private void ShowDragGhost(ImageSource? icon, string name, int count, Point grabOffset)
+    {
+        _dragGhost ??= new DragGhostWindow { Owner = this };
+        _dragGhost.SetContent(icon, name, count, grabOffset);
+        _dragGhost.MoveToCursor();
+        _dragGhost.Show();
+        _dragGhost.MoveToCursor(); // Show 後は実寸が確定するので正確な位置に置き直す
+    }
+
+    private void HideDragGhost() => _dragGhost?.Hide();
+
+    /// <summary>OLE ドラッグ中はマウスイベントが来ないため、GiveFeedback (連続発火する)
+    /// に乗ってゴーストを追従させる。カーソル形状は既定 (移動/コピー/禁止) のまま。</summary>
+    private void DragSource_GiveFeedback(object sender, GiveFeedbackEventArgs e)
+        => _dragGhost?.MoveToCursor();
+
+    // ---- ドラッグ中のスクロール ----
+
+    /// <summary>ドラッグ中のホイール / チルトスクロール。縦はカーソル下の列、
+    /// 横 (チルト / Shift+ホイール) は列ストリップ全体を動かす。</summary>
+    private void DragWheelScroll(int delta, bool tilt, Point screenPx)
+    {
+        // 自ウィンドウの上でだけ反応する (LL フックは画面全体のホイールを拾うため)
+        Point pos;
+        try { pos = PointFromScreen(screenPx); } catch { return; }
+        if (pos.X < 0 || pos.Y < 0 || pos.X > ActualWidth || pos.Y > ActualHeight)
+            return;
+
+        bool shift = (GetKeyState(0x10 /* VK_SHIFT */) & 0x8000) != 0;
+        if (tilt || shift)
+        {
+            // チルトは右チルト = 右へ、Shift+ホイールは上回転 = 左へ (通常時の操作感と揃える)
+            double d = tilt ? delta : -delta;
+            ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset + d);
+            return;
+        }
+
+        if (FindAncestor<ListBox>(InputHitTest(pos) as DependencyObject) is { } lb
+            && FindDescendant<ScrollViewer>(lb) is { } sv)
+        {
+            double lines = -delta / 120.0 * SystemParameters.WheelScrollLines;
+            // 列は項目単位スクロール (CanContentScroll) なので行数、そうでなければピクセル換算
+            sv.ScrollToVerticalOffset(sv.VerticalOffset + (sv.CanContentScroll ? lines : lines * 24));
+        }
+        else
+        {
+            // 列の外 (余白など) は通常時と同じく横スクロール
+            ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset - delta);
+        }
+    }
+
+    // OLE ドラッグ中はマウスが OLE 側にキャプチャされ、WM_MOUSEWHEEL が自ウィンドウに
+    // 届かない。そこでドラッグの間だけ低レベルマウスフックを張ってホイールを拾う。
+    // フックはドラッグ終了 (finally) で必ず外すので、通常時のコストはゼロ。
+
+    private const int WH_MOUSE_LL = 14;
+    private nint _dragMouseHook;
+    private LowLevelMouseProc? _dragMouseProc; // GC に回収されないよう保持必須
+
+    private delegate nint LowLevelMouseProc(int nCode, nint wParam, nint lParam);
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MSLLHOOKSTRUCT
+    {
+        public int X, Y;
+        public uint mouseData, flags, time;
+        public nuint dwExtraInfo;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint SetWindowsHookExW(int idHook, LowLevelMouseProc lpfn, nint hMod, uint dwThreadId);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool UnhookWindowsHookEx(nint hhk);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern nint CallNextHookEx(nint hhk, int nCode, nint wParam, nint lParam);
+
+    private void StartDragWheelHook()
+    {
+        if (_dragMouseHook != 0)
+            return;
+        _dragMouseProc = DragMouseHookProc;
+        _dragMouseHook = SetWindowsHookExW(WH_MOUSE_LL, _dragMouseProc, 0, 0);
+    }
+
+    private void StopDragWheelHook()
+    {
+        if (_dragMouseHook != 0)
+            UnhookWindowsHookEx(_dragMouseHook);
+        _dragMouseHook = 0;
+        _dragMouseProc = null;
+    }
+
+    private nint DragMouseHookProc(int nCode, nint wParam, nint lParam)
+    {
+        if (nCode >= 0 && (wParam == WM_MOUSEWHEEL || wParam == WM_MOUSEHWHEEL))
+        {
+            try
+            {
+                var info = System.Runtime.InteropServices.Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+                int delta = unchecked((short)((info.mouseData >> 16) & 0xFFFF));
+                DragWheelScroll(delta, wParam == WM_MOUSEHWHEEL, new Point(info.X, info.Y));
+            }
+            catch { /* フック内から例外を漏らさない */ }
+        }
+        return CallNextHookEx(_dragMouseHook, nCode, wParam, lParam);
+    }
+
+    private int _edgeScrollTick;
+
+    /// <summary>カーソルが端に寄ったまま運んでいるとき、見切れている先へ自動スクロールする。
+    /// DragOver はドラッグ中に高頻度で発火するため、時間で間引いて速度を一定に保つ。</summary>
+    private void DragEdgeAutoScroll(object sender, DragEventArgs e)
+    {
+        const double zone = 28;    // 端からこの距離 (DIP) で発動
+        const double hStep = 14;   // 横スクロールの 1 回分 (px)
+        const int intervalMs = 120; // この間隔ごとに 1 ステップ (小さいほど速い)
+
+        if (Environment.TickCount - _edgeScrollTick < intervalMs)
+            return;
+
+        bool scrolled = false;
+        var p = e.GetPosition(ColumnsScroll);
+        if (p.X < zone)
+        {
+            ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset - hStep);
+            scrolled = true;
+        }
+        else if (p.X > ColumnsScroll.ViewportWidth - zone)
+        {
+            ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset + hStep);
+            scrolled = true;
+        }
+
+        if (sender is ListBox lb && FindDescendant<ScrollViewer>(lb) is { } sv)
+        {
+            var q = e.GetPosition(sv);
+            if (q.Y < zone)
+            {
+                sv.ScrollToVerticalOffset(sv.VerticalOffset - 1); // 項目単位: 1 = 1 行
+                scrolled = true;
+            }
+            else if (q.Y > sv.ActualHeight - zone)
+            {
+                sv.ScrollToVerticalOffset(sv.VerticalOffset + 1);
+                scrolled = true;
+            }
+        }
+
+        if (scrolled)
+            _edgeScrollTick = Environment.TickCount;
+    }
+
     private void Column_DragOver(object sender, DragEventArgs e)
     {
+        StartDragWheelHook(); // 他アプリ発のドラッグでもホイールスクロールを効かせる
+        DragEdgeAutoScroll(sender, e);
+
         if (e.Data.GetDataPresent(HomeFormat))
         {
             var key = e.Data.GetData(HomeFormat) as string ?? "";
@@ -1258,12 +1454,18 @@ public partial class MainWindow : Window
 
     private void Column_DragLeave(object sender, DragEventArgs e)
     {
+        // 自分発のドラッグ中はフックを張ったままにする (列間の移動で DragLeave が
+        // 一瞬入るたびに外すとチラつくため、終了は DoDragDrop の finally に任せる)
+        if (!_isDragging)
+            StopDragWheelHook();
         ClearDropHighlight();
         ClearInsertIndicator();
     }
 
     private async void Column_Drop(object sender, DragEventArgs e)
     {
+        if (!_isDragging)
+            StopDragWheelHook();
         ClearDropHighlight();
         ClearInsertIndicator();
 
