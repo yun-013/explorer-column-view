@@ -1050,6 +1050,14 @@ public partial class MainWindow : Window
     private void Column_Loaded(object sender, RoutedEventArgs e)
         => (sender as FrameworkElement)?.BringIntoView();
 
+    /// <summary>最終列の自動幅は項目読み込み後に確定するため、広がった分が画面外へ
+    /// はみ出さないよう追従スクロールする。</summary>
+    private void Column_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.WidthChanged && sender is FrameworkElement { DataContext: ColumnModel { IsLast: true } } fe)
+            fe.BringIntoView();
+    }
+
     // ---- ホバー時のツールチップ (フォルダーはサイズを遅延計算) ----
 
     private CancellationTokenSource? _tooltipCts;

@@ -696,20 +696,12 @@
                     </ItemsControl.ItemsPanel>
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type local:ColumnModel}">
-                            <Border Loaded="Column_Loaded">
-                                <Border.Style>
-                                    <Style TargetType="Border">
-                                        <Setter Property="Width" Value="216"/>
-                                        <Setter Property="BorderBrush" Value="{DynamicResource BorderSoftBrush}"/>
-                                        <Setter Property="BorderThickness" Value="0,0,1,0"/>
-                                        <Style.Triggers>
-                                            <!-- 検索結果列はファイル名と場所が読めるよう広めに -->
-                                            <DataTrigger Binding="{Binding IsSearch}" Value="True">
-                                                <Setter Property="Width" Value="300"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </Border.Style>
+                            <!-- 幅はモデル側で決める: 最終列だけファイル名に合わせて自動調整 (上限あり)、
+                                 それ以外は既定幅。検索列の広め既定値もモデルが持つ -->
+                            <Border Loaded="Column_Loaded" SizeChanged="Column_SizeChanged"
+                                    Width="{Binding Width, Mode=OneWay}"
+                                    BorderBrush="{DynamicResource BorderSoftBrush}"
+                                    BorderThickness="0,0,1,0">
                                 <Grid>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
