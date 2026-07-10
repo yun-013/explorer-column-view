@@ -5,7 +5,7 @@ using Microsoft.VisualBasic.FileIO;
 namespace ColumnView;
 
 /// <summary>
-/// ドロップされたファイル / フォルダーの移動・コピー。
+/// ドロップされたファイル / フォルダの移動・コピー。
 /// Windows 標準の進捗ダイアログと上書き確認 UI (UIOption.AllDialogs) を使うため、
 /// エクスプローラーと同じ操作感になる。
 /// </summary>
@@ -13,7 +13,7 @@ public static class FileOps
 {
     /// <summary>
     /// <paramref name="sources"/> を <paramref name="targetDir"/> へ移動 / コピーする。
-    /// 戻り値は再読み込みすべきフォルダー (移動元の親と移動先)。
+    /// 戻り値は再読み込みすべきフォルダ (移動元の親と移動先)。
     /// <paramref name="performed"/> に実際に処理できた (元, 先) を返す (Ctrl+Z 用)。
     /// </summary>
     public static IReadOnlyCollection<string> Transfer(
@@ -36,19 +36,19 @@ public static class FileOps
                 var isDir = Directory.Exists(src);
                 var parent = Path.GetDirectoryName(trimmed);
 
-                // 自分自身や子孫フォルダーへの移動・コピーは不正
+                // 自分自身や子孫フォルダへの移動・コピーは不正
                 if (isDir && IsSameOrDescendant(targetDir, trimmed))
                 {
-                    error = "フォルダーを自分自身の中へは移動できません";
+                    error = "フォルダを自分自身の中へは移動できません";
                     continue;
                 }
-                // 同じフォルダー内への移動は何もしない (コピーは複製として許可)
+                // 同じフォルダ内への移動は何もしない (コピーは複製として許可)
                 if (!copy && string.Equals(parent, targetDir, StringComparison.OrdinalIgnoreCase))
                     continue;
 
                 var dest = Path.Combine(targetDir, name);
 
-                // 同じフォルダーへのコピーは「◯◯ - コピー」を作る (エクスプローラーと同じ)
+                // 同じフォルダへのコピーは「◯◯ - コピー」を作る (エクスプローラーと同じ)
                 if (copy && string.Equals(Path.GetFullPath(dest), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
                     dest = UniqueCopyName(targetDir, name, isDir);
 
@@ -119,7 +119,7 @@ public static class FileOps
     }
 
     /// <summary>
-    /// ごみ箱の無いボリューム用の疑似ごみ箱。同じボリューム直下の隠しフォルダー
+    /// ごみ箱の無いボリューム用の疑似ごみ箱。同じボリューム直下の隠しフォルダ
     /// .ColumnViewTrash\(日時) へ「移動」する (同一ボリューム内なのでデータ転送なしで一瞬)。
     /// 戻り値は移動できた (元, 先)。取り消しは元の場所へ移動し直すだけ。
     /// </summary>
@@ -152,7 +152,7 @@ public static class FileOps
             catch (Exception)
             {
                 // 共有のルートに書き込めない等 → この場所では退避できない (完全削除はしない)
-                error = "ごみ箱の無い場所で、退避フォルダーも作成できませんでした。完全に削除するには Shift+Del を使ってください";
+                error = "ごみ箱の無い場所で、退避フォルダも作成できませんでした。完全に削除するには Shift+Del を使ってください";
                 continue;
             }
 
@@ -264,9 +264,9 @@ public static class FileOps
     private static extern int SHFileOperationW(ref SHFILEOPSTRUCTW lpFileOp);
 
     /// <summary>
-    /// ファイル / フォルダーを削除する。permanent=false はごみ箱へ。
+    /// ファイル / フォルダを削除する。permanent=false はごみ箱へ。
     /// 確認・進捗ダイアログはエクスプローラーと同じシェル標準 UI。
-    /// 戻り値は再読み込みすべき親フォルダー。
+    /// 戻り値は再読み込みすべき親フォルダ。
     /// </summary>
     public static IReadOnlyCollection<string> Delete(
         IReadOnlyList<string> paths, bool permanent, nint ownerHwnd, out string? error)

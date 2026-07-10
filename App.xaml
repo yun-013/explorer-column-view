@@ -152,7 +152,7 @@
                                 </MultiTrigger.Conditions>
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSelectHoverBrush}"/>
                             </MultiTrigger>
-                            <!-- ドラッグ中のドロップ先フォルダー -->
+                            <!-- ドラッグ中のドロップ先フォルダ -->
                             <Trigger Property="local:DragDropHelper.DropHighlight" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentDropHighlightBrush}"/>
                                 <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentDropBorderBrush}"/>

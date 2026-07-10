@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace ColumnView;
 
-/// <summary>よく使うフォルダーの組合せ (タブグループ)。フォルダーとサブグループを入れ子に持てる。</summary>
+/// <summary>よく使うフォルダの組合せ (タブグループ)。フォルダとサブグループを入れ子に持てる。</summary>
 public class FavoriteGroup
 {
     public string Id { get; set; } = "";
@@ -12,7 +12,7 @@ public class FavoriteGroup
     public List<string> Paths { get; set; } = new();
     public List<FavoriteGroup> Subgroups { get; set; } = new();
 
-    /// <summary>子 (サブグループ＋フォルダー) の統一並び順。キー: フォルダー=パス、サブグループ="group:"+Id。</summary>
+    /// <summary>子 (サブグループ＋フォルダ) の統一並び順。キー: フォルダ=パス、サブグループ="group:"+Id。</summary>
     public List<string> ChildOrder { get; set; } = new();
 }
 
@@ -21,7 +21,7 @@ public class AppSettings
     public SortKey SortKey { get; set; } = SortKey.Name;
     public bool SortDescending { get; set; } = true;
 
-    /// <summary>フォルダーを先頭にまとめるか (false = フォルダーとファイルを同列に並べる)。</summary>
+    /// <summary>フォルダを先頭にまとめるか (false = フォルダとファイルを同列に並べる)。</summary>
     public bool FoldersFirst { get; set; }
 
     public bool ShowHidden { get; set; }
@@ -56,7 +56,7 @@ public class AppSettings
     /// <summary>起動時に前回のタブ構成を復元するか。</summary>
     public bool RestoreSession { get; set; } = true;
 
-    /// <summary>最後に閉じたウィンドウの各タブのフォルダー (null = ホーム)。</summary>
+    /// <summary>最後に閉じたウィンドウの各タブのフォルダ (null = ホーム)。</summary>
     public List<string?> SessionTabs { get; set; } = new();
 
     /// <summary>前回アクティブだったタブの位置。</summary>
@@ -123,7 +123,7 @@ public class AppSettings
         return true;
     }
 
-    // ---- 統一並び順 (ホーム列＝お気に入り＋グループ / グループ列＝サブグループ＋フォルダー) ----
+    // ---- 統一並び順 (ホーム列＝お気に入り＋グループ / グループ列＝サブグループ＋フォルダ) ----
 
     private static List<string> OrderBy(List<string> keys, List<string> order)
         => keys.OrderBy(k =>
@@ -142,7 +142,7 @@ public class AppSettings
         return OrderBy(keys, HomeOrder);
     }
 
-    /// <summary>グループの子 (サブグループ＋フォルダー) を統一順で返す。</summary>
+    /// <summary>グループの子 (サブグループ＋フォルダ) を統一順で返す。</summary>
     public List<string> OrderedChildKeys(FavoriteGroup group)
     {
         var keys = new List<string>();
@@ -306,7 +306,7 @@ public class AppSettings
         return true;
     }
 
-    /// <summary>グループにフォルダーを追加する (既に含まれていれば false)。</summary>
+    /// <summary>グループにフォルダを追加する (既に含まれていれば false)。</summary>
     public bool AddToGroup(string id, string path)
     {
         var group = FindGroup(id);
@@ -390,7 +390,7 @@ public class AppSettings
         return true;
     }
 
-    /// <summary>group 内のフォルダー source を target の直前/直後へ移動する (メンバーの並べ替え)。</summary>
+    /// <summary>group 内のフォルダ source を target の直前/直後へ移動する (メンバーの並べ替え)。</summary>
     public bool MovePathInGroup(string groupId, string source, string target, bool insertAfter)
     {
         var group = FindGroup(groupId);
@@ -414,7 +414,7 @@ public class AppSettings
         return true;
     }
 
-    /// <summary>id 配下 (サブグループ含む) の全フォルダーを順に集める (重複除去)。「すべて開く」用。</summary>
+    /// <summary>id 配下 (サブグループ含む) の全フォルダを順に集める (重複除去)。「すべて開く」用。</summary>
     public List<string> CollectPaths(string id)
     {
         var result = new List<string>();

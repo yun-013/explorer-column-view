@@ -12,7 +12,7 @@ namespace ColumnView;
 /// (Cloud Files API が付ける PINNED / UNPINNED / RECALL 属性) を読むだけなので、
 /// もともとプロバイダ非依存。ここではその上物として
 ///  - 同期ルートの列挙 (ホーム列に並べる / ツールチップにプロバイダ名を出す)
-///  - ファイル / フォルダー単位のオフライン切替 (📌 保持 ⇄ ☁ オンラインのみ)
+///  - ファイル / フォルダ単位のオフライン切替 (📌 保持 ⇄ ☁ オンラインのみ)
 /// を提供する。切替は cfapi が監視するピン属性を書くだけなので、各クライアントの
 /// 「常にこのデバイスに保持 / 空き容量を増やす」と同じ結果に同期される。
 /// </summary>
@@ -113,7 +113,7 @@ public static class CloudSync
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern uint GetCompressedFileSizeW(string lpFileName, out uint lpFileSizeHigh);
 
-    /// <summary>path が root と同じか、その配下か (フォルダー境界を尊重して前方一致の誤爆を防ぐ)。</summary>
+    /// <summary>path が root と同じか、その配下か (フォルダ境界を尊重して前方一致の誤爆を防ぐ)。</summary>
     private static bool IsUnderOrEqual(string path, string root)
     {
         if (!path.StartsWith(root, StringComparison.OrdinalIgnoreCase))
@@ -209,7 +209,7 @@ public static class CloudSync
     /// パスのオフライン保持状態を切り替える。
     /// pinned=true: 常にこのデバイスに保持 (📌 / ダウンロード)。
     /// pinned=false: オンラインのみ (☁ / 空き容量を確保)。
-    /// フォルダーは配下を再帰的に処理する。cfapi がこのピン属性を監視して同期する。
+    /// フォルダは配下を再帰的に処理する。cfapi がこのピン属性を監視して同期する。
     /// </summary>
     public static void SetOffline(string path, bool pinned, CancellationToken ct = default)
     {

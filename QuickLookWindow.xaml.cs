@@ -446,7 +446,7 @@ public partial class QuickLookWindow : Window
         FitToContent(400, 320, owner);
     }
 
-    /// <summary>シェルのサムネイル or アイコン (フォルダー・例外時のフォールバック) を非同期で表示。</summary>
+    /// <summary>シェルのサムネイル or アイコン (フォルダ・例外時のフォールバック) を非同期で表示。</summary>
     private async Task ShowThumbnailAsync(string path, int gen, Window owner)
     {
         var img = await Task.Run(() =>

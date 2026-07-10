@@ -662,7 +662,7 @@ public partial class MainWindow : Window
         var current = _vm.FavoriteTarget;
         if (current is not null)
         {
-            var fromCurrent = new MenuItem { Header = "現在のフォルダーで新規グループ…" };
+            var fromCurrent = new MenuItem { Header = "現在のフォルダで新規グループ…" };
             fromCurrent.Click += async (_, _) => await CreateGroupFlow(new[] { current }, null);
             menu.Items.Add(fromCurrent);
         }
@@ -675,11 +675,11 @@ public partial class MainWindow : Window
             menu.Items.Add(fromTabs);
         }
 
-        // 現在のフォルダーを既存グループへ追加 (深い階層でホーム列が隠れていても使える)
+        // 現在のフォルダを既存グループへ追加 (深い階層でホーム列が隠れていても使える)
         if (current is not null && _vm.Groups.Count > 0)
         {
             menu.Items.Add(new Separator());
-            var addTo = new MenuItem { Header = "現在のフォルダーをグループに追加" };
+            var addTo = new MenuItem { Header = "現在のフォルダをグループに追加" };
             foreach (var (group, depth) in _vm.GroupsExcept(""))
             {
                 var id = group.Id;
@@ -711,13 +711,13 @@ public partial class MainWindow : Window
         open.Click += async (_, _) => await _vm.OpenGroupAsync(id);
         menu.Items.Add(open);
 
-        var openDirect = new MenuItem { Header = "直下のフォルダーのみ開く" };
+        var openDirect = new MenuItem { Header = "直下のフォルダのみ開く" };
         openDirect.Click += async (_, _) => await _vm.OpenGroupDirectAsync(id);
         menu.Items.Add(openDirect);
 
         menu.Items.Add(new Separator());
 
-        var add = new MenuItem { Header = "現在のフォルダーを追加", IsEnabled = _vm.FavoriteTarget is not null };
+        var add = new MenuItem { Header = "現在のフォルダを追加", IsEnabled = _vm.FavoriteTarget is not null };
         add.Click += async (_, _) => await _vm.AddCurrentFolderToGroupAsync(id);
         menu.Items.Add(add);
 
@@ -763,7 +763,7 @@ public partial class MainWindow : Window
         return move;
     }
 
-    /// <summary>グループメンバー (フォルダー) を右クリック: グループから外す。</summary>
+    /// <summary>グループメンバー (フォルダ) を右クリック: グループから外す。</summary>
     private void ShowGroupMemberContextMenu(FileSystemItem member, ListBox owner)
     {
         if (member.GroupId is not { } id)
@@ -948,7 +948,7 @@ public partial class MainWindow : Window
             await _vm.OnItemSelectedAsync(column, item);
     }
 
-    /// <summary>選択中の項目のうち実ファイル / フォルダーだけのパス
+    /// <summary>選択中の項目のうち実ファイル / フォルダだけのパス
     /// (ホームのお気に入り・ドライブ・グループ行はファイル操作の対象外)。</summary>
     private static List<string> SelectedFilePaths(ListBox listBox)
         => listBox.SelectedItems.OfType<FileSystemItem>()
@@ -1058,7 +1058,7 @@ public partial class MainWindow : Window
             fe.BringIntoView();
     }
 
-    // ---- ホバー時のツールチップ (フォルダーはサイズを遅延計算) ----
+    // ---- ホバー時のツールチップ (フォルダはサイズを遅延計算) ----
 
     private CancellationTokenSource? _tooltipCts;
 
@@ -1106,10 +1106,10 @@ public partial class MainWindow : Window
 
         // グループ見出し: クリックは通常選択 (= 中身を次の列に展開)、ドラッグは並べ替え / 入れ子化
         _groupDragCandidate = item is { IsGroupEntry: true } ? item : null;
-        // グループメンバー (フォルダー): クリックはナビゲーション、ドラッグはグループ内の並べ替え
+        // グループメンバー (フォルダ): クリックはナビゲーション、ドラッグはグループ内の並べ替え
         _memberDragCandidate = item is { IsGroupMember: true } ? item : null;
 
-        // ドライブ・特殊フォルダー・お気に入り・グループはナビゲーション用なのでファイル D&D の対象外
+        // ドライブ・特殊フォルダ・お気に入り・グループはナビゲーション用なのでファイル D&D の対象外
         _dragCandidate = item is { UseRealIcon: false, IsGroupEntry: false } ? item : null;
         // お気に入りはホーム列内での並べ替え専用ドラッグ対象
         _favDragCandidate = item is { IsFavoriteEntry: true } ? item : null;
@@ -1229,7 +1229,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        // フォルダーをグループ見出しの上にドラッグ → そのグループへ追加
+        // フォルダをグループ見出しの上にドラッグ → そのグループへ追加
         if (GroupAddTarget(e) is { } addTarget)
         {
             e.Effects = DragDropEffects.Move;
@@ -1244,7 +1244,7 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
-    /// <summary>FileDrop のフォルダーがグループ見出しの上にあるなら、その見出しコンテナを返す。</summary>
+    /// <summary>FileDrop のフォルダがグループ見出しの上にあるなら、その見出しコンテナを返す。</summary>
     private static ListBoxItem? GroupAddTarget(DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -1291,7 +1291,7 @@ public partial class MainWindow : Window
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
             return;
 
-        // フォルダーをグループ見出しにドロップ → そのグループへ追加
+        // フォルダをグループ見出しにドロップ → そのグループへ追加
         if (GroupAddTarget(e) is { DataContext: FileSystemItem { GroupId: { } addId } })
         {
             var sources0 = (string[])e.Data.GetData(DataFormats.FileDrop);
@@ -1313,7 +1313,7 @@ public partial class MainWindow : Window
         await _vm.HandleDropAsync(sources, targetDir, copy: effect == DragDropEffects.Copy);
     }
 
-    /// <summary>ドロップ先フォルダー: カーソル下がフォルダーならそれ、なければ列のフォルダー。</summary>
+    /// <summary>ドロップ先フォルダ: カーソル下がフォルダならそれ、なければ列のフォルダ。</summary>
     private static string? ResolveTargetDir(object sender, DragEventArgs e)
     {
         var overItem = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as FileSystemItem;
@@ -1368,7 +1368,7 @@ public partial class MainWindow : Window
     private static ListBoxItem? ResolveChildDrop(object sender, DragEventArgs e, string sourceKey, out GroupDropMode mode)
     {
         mode = GroupDropMode.None;
-        // ホーム列 (Path==null,GroupId==null) または グループ列 (GroupId!=null)。フォルダー列(Path!=null)は対象外
+        // ホーム列 (Path==null,GroupId==null) または グループ列 (GroupId!=null)。フォルダ列(Path!=null)は対象外
         if (sender is not ListBox { DataContext: ColumnModel { Path: null } })
             return null;
 
@@ -1716,7 +1716,7 @@ public partial class MainWindow : Window
                 e.Handled = true;
                 break;
             case Key.V:
-                // 現在のフォルダーへ貼り付け。パス入力欄などのテキスト編集中は
+                // 現在のフォルダへ貼り付け。パス入力欄などのテキスト編集中は
                 // ネイティブの貼り付けを妨げない
                 if (Keyboard.FocusedElement is not TextBox && _vm.FavoriteTarget is { } dir)
                 {
@@ -1744,12 +1744,12 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>Ctrl+Shift+N: 現在のフォルダーに新しいフォルダーを作る。</summary>
+    /// <summary>Ctrl+Shift+N: 現在のフォルダに新しいフォルダを作る。</summary>
     private async Task NewFolderFlow()
     {
         if (_vm.SuggestNewFolderName() is not { } suggested)
             return;
-        if (PromptText("新しいフォルダー", "フォルダー名:", suggested) is { } name)
+        if (PromptText("新しいフォルダ", "フォルダ名:", suggested) is { } name)
             await _vm.CreateFolderAsync(name);
     }
 

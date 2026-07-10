@@ -6,7 +6,7 @@ namespace ColumnView;
 public enum InsertSide { None, Before, After }
 
 /// <summary>
-/// ドラッグ中にドロップ先フォルダーを強調するための添付プロパティ。
+/// ドラッグ中にドロップ先フォルダを強調するための添付プロパティ。
 /// ListBoxItem に設定し、ItemContainerStyle のトリガーで背景を切り替える。
 /// </summary>
 public static class DragDropHelper
