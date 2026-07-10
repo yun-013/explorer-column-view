@@ -6,7 +6,7 @@ namespace ColumnView;
 public enum ShellMenuResult
 {
     None,
-    ShellInvoked,   // シェルのコマンドを実行した (フォルダーを再読み込みすべき)
+    ShellInvoked,   // シェルのコマンドを実行した (フォルダを再読み込みすべき)
     Rename,         // 「名前の変更」が選ばれた (アプリ側で処理)
     AddFavorite,    // 独自項目: お気に入り
     CopyPath,       // 独自項目: パスをコピー

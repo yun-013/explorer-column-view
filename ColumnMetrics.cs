@@ -6,7 +6,7 @@ namespace ColumnView;
 
 /// <summary>
 /// 最終列 (最右) の幅をファイル名に合わせて自動調整するための実測ヘルパー。
-/// 全件を FormattedText で実測すると大フォルダーで重くなるため、
+/// 全件を FormattedText で実測すると大フォルダで重くなるため、
 /// 文字数ベースの概算で候補を上位数件に絞ってから実測する 2 段構えにしている。
 /// </summary>
 public static class ColumnMetrics

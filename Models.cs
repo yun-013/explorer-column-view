@@ -94,11 +94,11 @@ public class FileSystemItem : ObservableObject
     /// <summary>ホーム列のお気に入り項目 (★バッジ表示)</summary>
     public bool IsFavoriteEntry { get; init; }
 
-    /// <summary>検索結果でのみ表示する、検索起点から見た親フォルダーの相対パス。</summary>
+    /// <summary>検索結果でのみ表示する、検索起点から見た親フォルダの相対パス。</summary>
     public string? Location { get; init; }
     public Visibility LocationVisibility => Location is null ? Visibility.Collapsed : Visibility.Visible;
 
-    /// <summary>ツールチップの「場所」(親フォルダーのフルパス)。検索結果のみ表示。</summary>
+    /// <summary>ツールチップの「場所」(親フォルダのフルパス)。検索結果のみ表示。</summary>
     public string ParentPath => System.IO.Path.GetDirectoryName(Path) ?? "";
 
     // ---- タブグループ ----
@@ -106,13 +106,13 @@ public class FileSystemItem : ObservableObject
     /// <summary>グループ見出し行。クリックで中身を次の列に展開する。</summary>
     public bool IsGroupEntry { get; init; }
 
-    /// <summary>グループ内のフォルダー (メンバー) 行。グループ列に並ぶ。</summary>
+    /// <summary>グループ内のフォルダ (メンバー) 行。グループ列に並ぶ。</summary>
     public bool IsGroupMember { get; init; }
 
     /// <summary>グループ見出しなら自身の Id、メンバーなら所属グループの Id。</summary>
     public string? GroupId { get; init; }
 
-    /// <summary>グループ見出しの直下の項目数 (サブグループ＋フォルダー)。</summary>
+    /// <summary>グループ見出しの直下の項目数 (サブグループ＋フォルダ)。</summary>
     public int MemberCount { get; init; }
 
     private ImageSource? _resolvedIcon;
@@ -220,9 +220,9 @@ public class FileSystemItem : ObservableObject
 
     // ---- ホバー時のツールチップ情報 ----
 
-    /// <summary>「種類」(ファイルのみ表示)。フォルダーは行ごと非表示。</summary>
+    /// <summary>「種類」(ファイルのみ表示)。フォルダは行ごと非表示。</summary>
     public string TypeName => IsDirectory
-        ? "ファイル フォルダー"
+        ? "ファイル フォルダ"
         : IconCache.GetTypeName(System.IO.Path.GetExtension(Name));
 
     /// <summary>種類の行はファイルのときだけ見せる。</summary>
@@ -286,10 +286,10 @@ public class FileSystemItem : ObservableObject
     private string _folderSizeText = "計算中…";
     private bool _folderSizeComputed;
 
-    /// <summary>サイズ表示。ファイルは即時、フォルダーはホバー時に再帰計算した値。</summary>
+    /// <summary>サイズ表示。ファイルは即時、フォルダはホバー時に再帰計算した値。</summary>
     public string SizeText => IsDirectory ? _folderSizeText : FormatSize(Size);
 
-    /// <summary>フォルダーの合計サイズをバックグラウンドで集計する (ホバー時に一度だけ)。</summary>
+    /// <summary>フォルダの合計サイズをバックグラウンドで集計する (ホバー時に一度だけ)。</summary>
     public async Task EnsureFolderSizeAsync(CancellationToken ct)
     {
         if (!IsDirectory || _folderSizeComputed)
@@ -392,7 +392,7 @@ public class FileSystemItem : ObservableObject
         var ordered = descending ? (a, b) => cmp(b, a) : cmp;
         if (!foldersFirst)
             return ordered;
-        // フォルダー優先は昇順 / 降順に関わらず常に先頭
+        // フォルダ優先は昇順 / 降順に関わらず常に先頭
         return (a, b) => a.IsDirectory != b.IsDirectory ? (a.IsDirectory ? -1 : 1) : ordered(a, b);
     }
 
@@ -419,10 +419,10 @@ public abstract class ObservableObject : INotifyPropertyChanged
 
 public class ColumnModel : ObservableObject, IDisposable
 {
-    /// <summary>フォルダー列のパス。ホーム列・グループ列・検索列では null。</summary>
+    /// <summary>フォルダ列のパス。ホーム列・グループ列・検索列では null。</summary>
     public string? Path { get; }
 
-    /// <summary>非 null のとき、この列はグループの中身 (サブグループ＋フォルダー) を表す。</summary>
+    /// <summary>非 null のとき、この列はグループの中身 (サブグループ＋フォルダ) を表す。</summary>
     public string? GroupId { get; }
 
     /// <summary>検索結果の列。中身は検索側から流し込まれ、LoadAsync では作り直さない。</summary>
@@ -439,6 +439,15 @@ public class ColumnModel : ObservableObject, IDisposable
     {
         get => _isSearchRunning;
         set => Set(ref _isSearchRunning, value);
+    }
+
+    /// <summary>最初の読み込みが完了するまで true。読み込み中の空の列に
+    /// 「このフォルダは空です」を誤表示しないための状態 (検索列は IsSearchRunning が担う)。</summary>
+    private bool _isLoading;
+    public bool IsLoading
+    {
+        get => _isLoading;
+        set => Set(ref _isLoading, value);
     }
 
     public RangeObservableCollection<FileSystemItem> Items { get; } = new();
@@ -488,6 +497,7 @@ public class ColumnModel : ObservableObject, IDisposable
 
     private ColumnModel()
     {
+        _isLoading = true; // 最初の LoadAsync が終わるまで「読み込み中」(検索列は下の ctor で解除)
         _width = ColumnMetrics.DefaultWidth;
         // 読み込み・検索・監視更新はいずれも ReplaceAll (Reset 通知 1 回) で反映されるので、
         // ここでの再計算も項目入れ替えにつき 1 回しか走らない
@@ -498,7 +508,7 @@ public class ColumnModel : ObservableObject, IDisposable
         };
     }
 
-    /// <summary>フォルダー列 (path) / ホーム列 (null)。</summary>
+    /// <summary>フォルダ列 (path) / ホーム列 (null)。</summary>
     public ColumnModel(string? path) : this() => Path = path;
 
     /// <summary>グループの中身を表す列。</summary>
@@ -507,6 +517,7 @@ public class ColumnModel : ObservableObject, IDisposable
     private ColumnModel(bool isSearch) : this()
     {
         IsSearch = isSearch;
+        _isLoading = false; // 検索列は LoadAsync を通らない (進行状態は IsSearchRunning)
         _width = BaseWidth;
     }
 
@@ -548,6 +559,7 @@ public class ColumnModel : ObservableObject, IDisposable
                     item.ClipMark = ClipboardMarks.MarkFor(item.Path);
 
         Items.ReplaceAll(items);
+        IsLoading = false;
 
         _iconCts?.Cancel();
         _iconCts = new CancellationTokenSource();
@@ -568,7 +580,7 @@ public class ColumnModel : ObservableObject, IDisposable
     private System.Windows.Threading.DispatcherTimer? _fsTimer;
     private int _fsDirty; // 0=静穏 / 1=再読込予約済み (イベントの殺到を 1 回に束ねる)
 
-    /// <summary>フォルダー列の監視を開始する。名前・属性 (クラウド状態) のみ監視し、
+    /// <summary>フォルダ列の監視を開始する。名前・属性 (クラウド状態) のみ監視し、
     /// 書き込み中のサイズ変化などの高頻度イベントは拾わない (軽量化)。</summary>
     private void StartWatching()
     {
@@ -601,7 +613,7 @@ public class ColumnModel : ObservableObject, IDisposable
         }
         catch (Exception)
         {
-            // ネットワークパスや権限で監視できないフォルダーは自動更新なしで続行
+            // ネットワークパスや権限で監視できないフォルダは自動更新なしで続行
             _watcher?.Dispose();
             _watcher = null;
         }
@@ -736,7 +748,7 @@ public class ColumnModel : ObservableObject, IDisposable
         return items;
     }
 
-    /// <summary>グループの中身 (サブグループ＋フォルダー) を統一並び順で 1 列ぶんの項目として組み立てる。</summary>
+    /// <summary>グループの中身 (サブグループ＋フォルダ) を統一並び順で 1 列ぶんの項目として組み立てる。</summary>
     private static List<FileSystemItem> BuildGroupItems(string groupId)
     {
         var items = new List<FileSystemItem>();
@@ -893,7 +905,7 @@ public class TabModel : ObservableObject
         };
     }
 
-    /// <summary>ルートフォルダーの移動履歴 (null = ホーム)。Back/Forward 用。</summary>
+    /// <summary>ルートフォルダの移動履歴 (null = ホーム)。Back/Forward 用。</summary>
     public List<string?> History { get; } = new();
     public int HistoryIndex { get; set; } = -1;
 }

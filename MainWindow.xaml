@@ -174,7 +174,7 @@
             </Style.Triggers>
         </Style>
 
-        <!-- 通常のファイル / フォルダー行 (ホーム列のお気に入り・グループメンバーも含む) -->
+        <!-- 通常のファイル / フォルダ行 (ホーム列のお気に入り・グループメンバーも含む) -->
         <DataTemplate x:Key="FileItemTemplate" DataType="{x:Type local:FileSystemItem}">
             <Grid ToolTipService.ShowDuration="30000"
                   ToolTipOpening="Item_ToolTipOpening"
@@ -261,7 +261,7 @@
                        Source="{Binding Icon}" VerticalAlignment="Center"/>
                 <StackPanel Grid.Column="1" Margin="4,0,0,0" VerticalAlignment="Center">
                     <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
-                    <!-- 検索結果: 検索起点から見た場所 (サブフォルダー) を小さく添える -->
+                    <!-- 検索結果: 検索起点から見た場所 (サブフォルダ) を小さく添える -->
                     <TextBlock Text="{Binding Location}" FontSize="10.5"
                                Foreground="{DynamicResource TextSecondaryBrush}"
                                TextTrimming="CharacterEllipsis" Margin="0,1,0,0"
@@ -505,11 +505,11 @@
 
                     <!-- 右側のボタン群 -->
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource FavoriteToggle}"
-                                  ToolTip="現在のフォルダーをお気に入りに追加 / 削除"
+                                  ToolTip="現在のフォルダをお気に入りに追加 / 削除"
                                   IsChecked="{Binding IsCurrentFavorite, Mode=OneWay}" Click="Favorite_Click"/>
                     <Button x:Name="GroupsButton" DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
                             Content="&#xE71D;" Foreground="{DynamicResource AccentBrush}"
-                            ToolTip="タブグループ (よく使うフォルダーの組合せをワンクリックで開く)"
+                            ToolTip="タブグループ (よく使うフォルダの組合せをワンクリックで開く)"
                             Click="GroupsButton_Click"/>
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE7B3;"
                                   ToolTip="隠しファイルを表示 (Ctrl+H)" IsChecked="{Binding ShowHidden}"/>
@@ -531,7 +531,7 @@
                         </Button.Content>
                     </Button>
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE8B7;"
-                                  ToolTip="フォルダーを先頭にまとめる (オフ = ファイルと同列に並べる)"
+                                  ToolTip="フォルダを先頭にまとめる (オフ = ファイルと同列に並べる)"
                                   IsChecked="{Binding FoldersFirst}"/>
                     <ComboBox DockPanel.Dock="Right" Width="82" Height="28" Margin="2,0" FontSize="12"
                               Style="{StaticResource SortComboBox}" ToolTip="並べ替えの基準"
@@ -547,7 +547,7 @@
                             Content="&#xE721;" Visibility="Collapsed"
                             ToolTip="検索 (Ctrl+F)" Click="SearchToggle_Click"/>
 
-                    <!-- 検索ボックス: 現在のフォルダー以下を名前で検索 (Enter で実行) -->
+                    <!-- 検索ボックス: 現在のフォルダ以下を名前で検索 (Enter で実行) -->
                     <Border x:Name="SearchBorder" DockPanel.Dock="Right" Width="170" Height="32" Margin="2,0"
                             Background="{DynamicResource SurfaceBrush}"
                             BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
@@ -560,7 +560,7 @@
                                      Foreground="{DynamicResource TextPrimaryBrush}"
                                      CaretBrush="{DynamicResource TextPrimaryBrush}"
                                      VerticalContentAlignment="Center" Padding="26,0,24,0"
-                                     ToolTip="現在のフォルダー以下を検索 (Enter で実行 / Esc で閉じる。* ? のワイルドカード可)"
+                                     ToolTip="現在のフォルダ以下を検索 (Enter で実行 / Esc で閉じる。* ? のワイルドカード可)"
                                      KeyDown="SearchBox_KeyDown" LostKeyboardFocus="SearchBox_LostFocus"/>
                             <TextBlock Text="検索 (Ctrl+F)" IsHitTestVisible="False"
                                        Foreground="{DynamicResource TextTertiaryBrush}"
@@ -748,7 +748,7 @@
                                                HorizontalAlignment="Center" VerticalAlignment="Center">
                                         <TextBlock.Style>
                                             <Style TargetType="TextBlock">
-                                                <Setter Property="Text" Value="このフォルダーは空です"/>
+                                                <Setter Property="Text" Value="このフォルダは空です"/>
                                                 <Setter Property="Visibility" Value="Collapsed"/>
                                                 <Style.Triggers>
                                                     <MultiDataTrigger>
@@ -763,6 +763,10 @@
                                                     </DataTrigger>
                                                     <DataTrigger Binding="{Binding IsSearchRunning}" Value="True">
                                                         <Setter Property="Text" Value="検索中…"/>
+                                                    </DataTrigger>
+                                                    <!-- 初回読み込みが終わるまでは「空です」ではなく読み込み中を出す -->
+                                                    <DataTrigger Binding="{Binding IsLoading}" Value="True">
+                                                        <Setter Property="Text" Value="読み込み中…"/>
                                                     </DataTrigger>
                                                 </Style.Triggers>
                                             </Style>

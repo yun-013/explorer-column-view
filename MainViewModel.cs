@@ -219,7 +219,7 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>フォルダーを先頭にまとめるか (false = フォルダーとファイルを同列に並べる)。</summary>
+    /// <summary>フォルダを先頭にまとめるか (false = フォルダとファイルを同列に並べる)。</summary>
     public bool FoldersFirst
     {
         get => _settings.FoldersFirst;
@@ -287,7 +287,7 @@ public class MainViewModel : ObservableObject
         path ??= FavoriteTarget;
         if (path is null)
         {
-            StatusText = "お気に入りに登録できるのはフォルダーのみです";
+            StatusText = "お気に入りに登録できるのはフォルダのみです";
             return;
         }
         if (File.Exists(path))
@@ -321,7 +321,7 @@ public class MainViewModel : ObservableObject
     public IEnumerable<(FavoriteGroup Group, int Depth)> GroupsExcept(string id)
         => _settings.EnumerateGroupsExcept(id);
 
-    /// <summary>グループ配下 (サブグループ含む) の全フォルダーをそれぞれ新しいタブで開く。</summary>
+    /// <summary>グループ配下 (サブグループ含む) の全フォルダをそれぞれ新しいタブで開く。</summary>
     public async Task OpenGroupAsync(string id)
     {
         var group = _settings.FindGroup(id);
@@ -330,7 +330,7 @@ public class MainViewModel : ObservableObject
         var paths = _settings.CollectPaths(id).Where(Directory.Exists).ToList();
         if (paths.Count == 0)
         {
-            StatusText = $"『{group.Name}』に開けるフォルダーがありません";
+            StatusText = $"『{group.Name}』に開けるフォルダがありません";
             return;
         }
         foreach (var path in paths)
@@ -338,7 +338,7 @@ public class MainViewModel : ObservableObject
         StatusText = $"グループ『{group.Name}』を {paths.Count} 個のタブで開きました";
     }
 
-    /// <summary>グループ直下のフォルダーだけをタブで開く (サブグループは含めない)。</summary>
+    /// <summary>グループ直下のフォルダだけをタブで開く (サブグループは含めない)。</summary>
     public async Task OpenGroupDirectAsync(string id)
     {
         var group = _settings.FindGroup(id);
@@ -347,7 +347,7 @@ public class MainViewModel : ObservableObject
         var paths = group.Paths.Where(Directory.Exists).ToList();
         if (paths.Count == 0)
         {
-            StatusText = $"『{group.Name}』の直下に開けるフォルダーがありません";
+            StatusText = $"『{group.Name}』の直下に開けるフォルダがありません";
             return;
         }
         foreach (var path in paths)
@@ -365,7 +365,7 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>新しいグループを作成する。parentId 指定で入れ子、seed でフォルダーを初期登録。</summary>
+    /// <summary>新しいグループを作成する。parentId 指定で入れ子、seed でフォルダを初期登録。</summary>
     public async Task CreateGroupAsync(string name, IEnumerable<string>? seed = null, string? parentId = null)
     {
         var group = _settings.CreateGroup(name, parentId);
@@ -401,13 +401,13 @@ public class MainViewModel : ObservableObject
         await RefreshGroupColumnsAsync();
     }
 
-    /// <summary>現在表示中のフォルダーをグループに追加する。</summary>
+    /// <summary>現在表示中のフォルダをグループに追加する。</summary>
     public async Task AddCurrentFolderToGroupAsync(string id)
     {
         var target = FavoriteTarget;
         if (target is null)
         {
-            StatusText = "追加できるフォルダーがありません";
+            StatusText = "追加できるフォルダがありません";
             return;
         }
         var groupName = _settings.FindGroup(id)?.Name ?? "";
@@ -422,12 +422,12 @@ public class MainViewModel : ObservableObject
     {
         if (_settings.RemoveFromGroup(id, path))
         {
-            StatusText = "グループからフォルダーを削除しました";
+            StatusText = "グループからフォルダを削除しました";
             await RefreshGroupColumnsAsync();
         }
     }
 
-    /// <summary>フォルダー群をグループに追加する (グループ見出しへのドラッグ＆ドロップ用)。</summary>
+    /// <summary>フォルダ群をグループに追加する (グループ見出しへのドラッグ＆ドロップ用)。</summary>
     public async Task AddPathsToGroupAsync(string id, IEnumerable<string> paths)
     {
         if (_settings.FindGroup(id) is not { } group)
@@ -437,7 +437,7 @@ public class MainViewModel : ObservableObject
             if (Directory.Exists(path) && _settings.AddToGroup(id, path))
                 added++;
         StatusText = added > 0
-            ? $"『{group.Name}』に {added} 個のフォルダーを追加しました"
+            ? $"『{group.Name}』に {added} 個のフォルダを追加しました"
             : $"『{group.Name}』には既に含まれています";
         await RefreshGroupColumnsAsync();
     }
@@ -473,7 +473,7 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>グループ内のメンバーフォルダーをドラッグで並べ替える。</summary>
+    /// <summary>グループ内のメンバーフォルダをドラッグで並べ替える。</summary>
     public async Task MovePathInGroupAsync(string groupId, string source, string target, bool insertAfter)
     {
         if (_settings.MovePathInGroup(groupId, source, target, insertAfter))
@@ -483,7 +483,7 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>現在開いている各タブのルートフォルダー一覧 (ホームタブは除外)。</summary>
+    /// <summary>現在開いている各タブのルートフォルダ一覧 (ホームタブは除外)。</summary>
     public List<string> OpenTabRoots()
         => Tabs.Select(t => t.Columns.FirstOrDefault()?.Path)
             .Where(p => p is not null && Directory.Exists(p!))
@@ -515,14 +515,14 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    // ---- 検索 (現在のフォルダー以下をその場で走査) ----
+    // ---- 検索 (現在のフォルダ以下をその場で走査) ----
 
     /// <summary>結果の上限。インデックスを持たない走査型なので、際限なく集めない。</summary>
     private const int MaxSearchResults = 500;
 
     private CancellationTokenSource? _searchCts;
 
-    /// <summary>現在のフォルダー以下を名前で再帰検索し、結果を専用の列へ流し込む。
+    /// <summary>現在のフォルダ以下を名前で再帰検索し、結果を専用の列へ流し込む。
     /// インデックスや常駐監視は持たず、Enter のたびにその場で走査する (キャンセル可・上限あり)。</summary>
     public async Task SearchAsync(string query)
     {
@@ -531,7 +531,7 @@ public class MainViewModel : ObservableObject
             return;
         if (FavoriteTarget is not { } scope)
         {
-            StatusText = "検索できるフォルダーがありません";
+            StatusText = "検索できるフォルダがありません";
             return;
         }
 
@@ -660,7 +660,7 @@ public class MainViewModel : ObservableObject
                     }
                     catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
                     {
-                        // アクセスできないフォルダーは無視して続行
+                        // アクセスできないフォルダは無視して続行
                     }
                 }
             }, ct);
@@ -714,7 +714,7 @@ public class MainViewModel : ObservableObject
         await NewTabAsync(null);
     }
 
-    /// <summary>現在のタブ構成 (各タブの最深フォルダー) を設定へ保存する。最後のウィンドウを閉じるときに呼ぶ。</summary>
+    /// <summary>現在のタブ構成 (各タブの最深フォルダ) を設定へ保存する。最後のウィンドウを閉じるときに呼ぶ。</summary>
     public void SaveSession()
     {
         _settings.SessionTabs = Tabs
@@ -786,7 +786,7 @@ public class MainViewModel : ObservableObject
         path = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"'));
         if (ActiveTab is null || !Directory.Exists(path))
         {
-            StatusText = $"フォルダーが見つかりません: {path}";
+            StatusText = $"フォルダが見つかりません: {path}";
             return;
         }
         await ResetTabAsync(ActiveTab, path);
@@ -832,8 +832,8 @@ public class MainViewModel : ObservableObject
         // 選択列より右の列を畳む
         TrimColumns(tab, index + 1);
 
-        // グループ見出し: 中身 (サブグループ＋フォルダー) を次の列に展開する。
-        // CurrentPath は据え置き (直前のフォルダーを「現在のフォルダー」として追加できるように)。
+        // グループ見出し: 中身 (サブグループ＋フォルダ) を次の列に展開する。
+        // CurrentPath は据え置き (直前のフォルダを「現在のフォルダ」として追加できるように)。
         if (item.IsGroupEntry)
         {
             if (item.GroupId is not { } gid || _settings.FindGroup(gid) is not { } group)
@@ -921,7 +921,7 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    // ---- クリップボード (コピー / 切り取り / 貼り付け) ・削除・新規フォルダー ----
+    // ---- クリップボード (コピー / 切り取り / 貼り付け) ・削除・新規フォルダ ----
 
     /// <summary>選択ファイル群をクリップボードへ (エクスプローラー互換)。cut=true で切り取り。</summary>
     public void CopyToClipboard(IReadOnlyList<string> paths, bool cut)
@@ -966,7 +966,7 @@ public class MainViewModel : ObservableObject
             : new MoveOp(performed));
     }
 
-    /// <summary>直前のファイル操作 (名前変更 / 移動 / コピー / 新規フォルダー / 削除) を取り消す。</summary>
+    /// <summary>直前のファイル操作 (名前変更 / 移動 / コピー / 新規フォルダ / 削除) を取り消す。</summary>
     public async Task UndoAsync()
     {
         if (UndoStack.PopUndo() is not { } op)
@@ -1033,7 +1033,7 @@ public class MainViewModel : ObservableObject
             return;
         }
 
-        // 通常は 1 フォルダー内の選択なのでどちらか一方だけになる
+        // 通常は 1 フォルダ内の選択なのでどちらか一方だけになる
         var recyclable = paths.Where(FileOps.SupportsRecycleBin).ToList();
         var trashable = paths.Where(p => !FileOps.SupportsRecycleBin(p)).ToList();
         var affectedAll = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1082,15 +1082,15 @@ public class MainViewModel : ObservableObject
         await RefreshColumnsAsync(affectedAll);
     }
 
-    /// <summary>現在のフォルダーに新しいフォルダーを作る。既定名の重複は連番を付ける。</summary>
+    /// <summary>現在のフォルダに新しいフォルダを作る。既定名の重複は連番を付ける。</summary>
     public string? SuggestNewFolderName()
     {
         if (FavoriteTarget is not { } parent)
             return null;
-        var name = "新しいフォルダー";
+        var name = "新しいフォルダ";
         var n = 2;
         while (Directory.Exists(Path.Combine(parent, name)) || File.Exists(Path.Combine(parent, name)))
-            name = $"新しいフォルダー ({n++})";
+            name = $"新しいフォルダ ({n++})";
         return name;
     }
 
@@ -1108,11 +1108,11 @@ public class MainViewModel : ObservableObject
                 return;
             }
             Directory.CreateDirectory(path);
-            UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダー"));
-            StatusText = $"フォルダーを作成しました: {name}";
+            UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダ"));
+            StatusText = $"フォルダを作成しました: {name}";
             await RefreshColumnsAsync(new[] { parent });
 
-            // 作ったフォルダーを選択する (通常のクリックと同じ扱いで次の列が開く)
+            // 作ったフォルダを選択する (通常のクリックと同じ扱いで次の列が開く)
             var column = ActiveTab?.Columns.FirstOrDefault(
                 c => string.Equals(c.Path, parent, StringComparison.OrdinalIgnoreCase));
             if (column?.Items.FirstOrDefault(
@@ -1121,7 +1121,7 @@ public class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            StatusText = "フォルダーを作成できませんでした: " + ex.Message;
+            StatusText = "フォルダを作成できませんでした: " + ex.Message;
         }
     }
 
@@ -1138,7 +1138,7 @@ public class MainViewModel : ObservableObject
         await RefreshColumnsAsync(affected);
     }
 
-    /// <summary>指定フォルダーを表示している列を再読み込みする (選択は保持)。</summary>
+    /// <summary>指定フォルダを表示している列を再読み込みする (選択は保持)。</summary>
     public async Task RefreshColumnsAsync(IEnumerable<string> dirs)
     {
         var set = new HashSet<string>(dirs, StringComparer.OrdinalIgnoreCase);
@@ -1184,12 +1184,12 @@ public class MainViewModel : ObservableObject
         {
             var subs = column.Items.Count(i => i.IsGroupEntry);
             var folders = column.Items.Count(i => i.IsGroupMember);
-            StatusText = $"{subs} サブグループ、{folders} フォルダー";
+            StatusText = $"{subs} サブグループ、{folders} フォルダ";
             return;
         }
         var dirs = column.Items.Count(i => i.IsDirectory);
         var files = column.Items.Count - dirs;
-        StatusText = $"{dirs} フォルダー、{files} ファイル";
+        StatusText = $"{dirs} フォルダ、{files} ファイル";
     }
 
     private static string TrimTitle(string title)

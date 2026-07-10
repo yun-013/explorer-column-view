@@ -50,7 +50,7 @@ public interface IUndoOp
 {
     string Description { get; }
 
-    /// <summary>取り消しを実行し、再読込すべきフォルダーを返す。</summary>
+    /// <summary>取り消しを実行し、再読込すべきフォルダを返す。</summary>
     IReadOnlyCollection<string> Undo(out string? error);
 
     /// <summary>この操作の逆 (Undo した状態から元へ戻す操作)。</summary>
@@ -107,7 +107,7 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
                 affected.Add(destDir);
             try
             {
-                // 移動先の親が消えていても戻せるように作り直す (掃除済みの退避フォルダーへのやり直し等)
+                // 移動先の親が消えていても戻せるように作り直す (掃除済みの退避フォルダへのやり直し等)
                 if (Path.GetDirectoryName(source.TrimEnd('\\')) is { Length: > 0 } parent)
                     Directory.CreateDirectory(parent);
                 if (Directory.Exists(dest))
@@ -130,7 +130,7 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
     }
 }
 
-/// <summary>「これらのパスをごみ箱へ入れる」操作。コピー / 新規フォルダーの取り消し、削除のやり直しに使う。
+/// <summary>「これらのパスをごみ箱へ入れる」操作。コピー / 新規フォルダの取り消し、削除のやり直しに使う。
 /// ごみ箱の無い場所 (NAS 等) はアプリの退避ごみ箱へ移動し、完全削除にはしない。
 /// 逆操作は実行時にどこへ入れたか (ごみ箱 / 退避先) を記録して組み立てる。</summary>
 public sealed class RecycleOp(IReadOnlyList<string> paths, string description) : IUndoOp
