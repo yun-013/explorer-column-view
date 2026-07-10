@@ -457,13 +457,58 @@ public class ColumnModel : ObservableObject, IDisposable
         set => Set(ref _error, value);
     }
 
+    // ---- 列幅 (最終列だけファイル名に合わせて自動調整) ----
+
+    /// <summary>最終列 (最右) かどうか。TabModel が列の増減時に割り当てる。</summary>
+    private bool _isLast;
+    public bool IsLast
+    {
+        get => _isLast;
+        set
+        {
+            if (_isLast == value)
+                return;
+            _isLast = value;
+            UpdateWidth();
+        }
+    }
+
+    /// <summary>表示幅。最終列は内容の実測 (上限あり)、それ以外は既定幅に畳む。</summary>
+    private double _width;
+    public double Width
+    {
+        get => _width;
+        private set => Set(ref _width, value);
+    }
+
+    private double BaseWidth => IsSearch ? ColumnMetrics.SearchWidth : ColumnMetrics.DefaultWidth;
+
+    private void UpdateWidth()
+        => Width = IsLast ? ColumnMetrics.Fit(Items, BaseWidth) : BaseWidth;
+
+    private ColumnModel()
+    {
+        _width = ColumnMetrics.DefaultWidth;
+        // 読み込み・検索・監視更新はいずれも ReplaceAll (Reset 通知 1 回) で反映されるので、
+        // ここでの再計算も項目入れ替えにつき 1 回しか走らない
+        Items.CollectionChanged += (_, _) =>
+        {
+            if (IsLast)
+                UpdateWidth();
+        };
+    }
+
     /// <summary>フォルダー列 (path) / ホーム列 (null)。</summary>
-    public ColumnModel(string? path) => Path = path;
+    public ColumnModel(string? path) : this() => Path = path;
 
     /// <summary>グループの中身を表す列。</summary>
-    public ColumnModel(FavoriteGroup group) => GroupId = group.Id;
+    public ColumnModel(FavoriteGroup group) : this() => GroupId = group.Id;
 
-    private ColumnModel(bool isSearch) => IsSearch = isSearch;
+    private ColumnModel(bool isSearch) : this()
+    {
+        IsSearch = isSearch;
+        _width = BaseWidth;
+    }
 
     /// <summary>検索結果を表示する列を作る。</summary>
     public static ColumnModel CreateSearch(string query) => new(isSearch: true) { SearchQuery = query };
@@ -837,6 +882,16 @@ public class TabModel : ObservableObject
     }
 
     public ObservableCollection<ColumnModel> Columns { get; } = new();
+
+    public TabModel()
+    {
+        // 列の増減のたびに最終列を割り当て直す (最終列だけ幅の自動調整が働く)
+        Columns.CollectionChanged += (_, _) =>
+        {
+            for (var i = 0; i < Columns.Count; i++)
+                Columns[i].IsLast = i == Columns.Count - 1;
+        };
+    }
 
     /// <summary>ルートフォルダーの移動履歴 (null = ホーム)。Back/Forward 用。</summary>
     public List<string?> History { get; } = new();
