@@ -1,0 +1,5 @@
+# ai-workspace プロジェクト設定
+# .NET 8 WPF アプリ。テストプロジェクトが無いため、検証はビルド成功とする
+
+[check]
+commands = ["dotnet build ColumnView.csproj -nologo -v q"]
