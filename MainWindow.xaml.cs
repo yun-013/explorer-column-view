@@ -11,6 +11,10 @@ public partial class MainWindow : Window
 {
     private readonly MainViewModel _vm;
 
+    /// <summary>最後にアクティブだったウィンドウ。別プロセスから転送された
+    /// 「フォルダーを開く」要求 (単一インスタンス) の届け先になる。</summary>
+    public static MainWindow? LastActivated { get; private set; }
+
     public MainWindow() : this(new MainViewModel()) { }
 
     public MainWindow(MainViewModel vm)
@@ -19,6 +23,9 @@ public partial class MainWindow : Window
         _vm = vm;
         DataContext = _vm;
         _vm.TabsEmptied += OnTabsEmptied;
+
+        Activated += (_, _) => LastActivated = this;
+        Closed += (_, _) => { if (LastActivated == this) LastActivated = null; };
 
         // パンくずが長いときは先頭ではなく末尾 (現在地) を見せる
         _vm.Breadcrumbs.CollectionChanged += (_, _) =>
@@ -31,6 +38,16 @@ public partial class MainWindow : Window
 
         // Quick Look が開いている間、選択を変えるとプレビューを追従させる
         _vm.PreviewFollow = FollowQuickLook;
+    }
+
+    /// <summary>別プロセス (フォルダーのダブルクリック等) から渡されたフォルダーを
+    /// 新しいタブで開き、ウィンドウを前面に出す。</summary>
+    public async Task OpenFolderTabAsync(string path)
+    {
+        if (WindowState == WindowState.Minimized)
+            WindowState = WindowState.Normal;
+        Activate();
+        await _vm.NewTabAsync(path);
     }
 
     // ---- Quick Look プレビュー (スペースキー) ----
