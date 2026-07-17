@@ -7,6 +7,9 @@ namespace ColumnView;
 
 public partial class App : Application
 {
+    // 単一インスタンス判定用。プロセス終了まで握りっぱなしにする (GC 回収防止のため保持)
+    private static Mutex? _instanceMutex;
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
@@ -17,12 +20,76 @@ public partial class App : Application
         AppDomain.CurrentDomain.UnhandledException += (_, a) => LogCrash(a.ExceptionObject as Exception, "AppDomain");
         TaskScheduler.UnobservedTaskException += (_, a) => { LogCrash(a.Exception, "Task"); a.SetObserved(); };
 
+        // ---- コマンドライン: 既定アプリ登録/解除 (ウィンドウを開かず終了) ----
+        var quiet = e.Args.Contains("--quiet");
+        if (e.Args.Contains("--register"))
+        {
+            AppRegistration.Register(quiet);
+            Shutdown();
+            return;
+        }
+        if (e.Args.Contains("--unregister"))
+        {
+            AppRegistration.Unregister(quiet);
+            Shutdown();
+            return;
+        }
+
+        // フォルダーパス引数 (フォルダーの既定アプリとして起動されたとき Explorer が渡してくる)
+        var initialFolder = e.Args.Select(NormalizeFolderArg).FirstOrDefault(p => p is not null);
+
+        // ---- 単一インスタンス: 起動済みならフォルダーを既存ウィンドウの新タブへ転送 ----
+        _instanceMutex = new Mutex(true, SingleInstance.MutexName, out var isFirst);
+        if (!isFirst && initialFolder is not null && SingleInstance.TrySendToExisting(initialFolder))
+        {
+            Shutdown();
+            return;
+        }
+        if (isFirst)
+            SingleInstance.StartServer(OpenFolderInExistingWindow);
+
         // Windows の「アプリのモード」(ライト/ダーク) に追従
         ApplySystemTheme();
 
         // 退避ごみ箱 (NAS 等) の保持期限切れを背景で掃除する。
         // 起動をブロックしない (オフラインの NAS は Directory.Exists が数秒待つことがある)
         _ = Task.Run(FileOps.PurgeAllTrashRoots);
+
+        new MainWindow(MainViewModel.CreateForStartup(initialFolder)).Show();
+    }
+
+    /// <summary>引数をフォルダーパスとして解釈する (違うものは null)。
+    /// ドライブルートは `"C:\"` の末尾 \ が閉じ引用符をエスケープして `C:"` で届くため補正する。</summary>
+    private static string? NormalizeFolderArg(string raw)
+    {
+        var path = raw.Trim().Trim('"');
+        if (path.Length == 0 || path.StartsWith("--", StringComparison.Ordinal))
+            return null;
+        if (path.Length == 2 && char.IsLetter(path[0]) && path[1] == ':')
+            path += "\\";
+        try
+        {
+            path = Path.GetFullPath(path);
+        }
+        catch
+        {
+            return null;
+        }
+        return Directory.Exists(path) ? path : null;
+    }
+
+    /// <summary>別プロセスから転送されたフォルダーを、最後に使ったウィンドウの新タブで開く。</summary>
+    private void OpenFolderInExistingWindow(string folder)
+    {
+        Dispatcher.InvokeAsync(() =>
+        {
+            // 注意: App 内では MainWindow が Application.MainWindow プロパティに解決されるため要修飾
+            var window = ColumnView.MainWindow.LastActivated is { IsLoaded: true } w
+                ? w
+                : Windows.OfType<ColumnView.MainWindow>().FirstOrDefault();
+            if (window is not null)
+                _ = window.OpenFolderTabAsync(folder);
+        });
     }
 
     protected override void OnExit(ExitEventArgs e)

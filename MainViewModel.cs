@@ -691,8 +691,18 @@ public class MainViewModel : ObservableObject
             _ = InitTabsAsync();
     }
 
-    /// <summary>起動時: 前回のセッションがあれば復元し、なければホームタブを開く。</summary>
-    private async Task InitTabsAsync()
+    /// <summary>起動用ファクトリ: セッション復元に加えて、フォルダーの既定アプリとして
+    /// 起動されたときの引数フォルダーをアクティブなタブで開く。</summary>
+    public static MainViewModel CreateForStartup(string? initialFolder)
+    {
+        var vm = new MainViewModel(createInitialTab: false);
+        _ = vm.InitTabsAsync(initialFolder);
+        return vm;
+    }
+
+    /// <summary>起動時: 前回のセッションがあれば復元し、なければホームタブを開く。
+    /// extraFolder があればそれを最後に開いてアクティブにする (引数起動)。</summary>
+    private async Task InitTabsAsync(string? extraFolder = null)
     {
         if (_settings.RestoreSession && _settings.SessionTabs.Count > 0)
         {
@@ -708,10 +718,14 @@ public class MainViewModel : ObservableObject
                 var active = _settings.SessionActiveTab;
                 if (active >= 0 && active < Tabs.Count)
                     ActiveTab = Tabs[active];
+                // 引数フォルダーは復元タブの後ろに追加して前面に出す
+                // (復元をやめて単独で開くと、閉じたとき SaveSession が元のセッションを潰すため)
+                if (extraFolder is not null)
+                    await NewTabAsync(extraFolder);
                 return;
             }
         }
-        await NewTabAsync(null);
+        await NewTabAsync(extraFolder);
     }
 
     /// <summary>現在のタブ構成 (各タブの最深フォルダ) を設定へ保存する。最後のウィンドウを閉じるときに呼ぶ。</summary>
