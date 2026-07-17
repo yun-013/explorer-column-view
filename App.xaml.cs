@@ -36,11 +36,25 @@ public partial class App : Application
         }
 
         // フォルダーパス引数 (フォルダーの既定アプリとして起動されたとき Explorer が渡してくる)
-        var initialFolder = e.Args.Select(NormalizeFolderArg).FirstOrDefault(p => p is not null);
+        var rawArg = e.Args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
+        string? initialFolder = null;
+        if (rawArg is not null)
+        {
+            initialFolder = NormalizeFolderArg(rawArg);
+            if (initialFolder is null)
+            {
+                // 扱えない引数 (ごみ箱・PC 等の仮想フォルダー ::{CLSID} や shell: パス) は
+                // 本物のエクスプローラーに任せて終了する (黙って無視しない)
+                PassThroughToExplorer(rawArg);
+                Shutdown();
+                return;
+            }
+        }
 
-        // ---- 単一インスタンス: 起動済みならフォルダーを既存ウィンドウの新タブへ転送 ----
+        // ---- 単一インスタンス: 起動済みなら既存ウィンドウの新タブへ転送 ----
+        // 引数なし (Win+E・exe 直接起動) はホームタブを開く要求として転送する
         _instanceMutex = new Mutex(true, SingleInstance.MutexName, out var isFirst);
-        if (!isFirst && initialFolder is not null && SingleInstance.TrySendToExisting(initialFolder))
+        if (!isFirst && SingleInstance.TrySendToExisting(initialFolder ?? SingleInstance.HomeRequest))
         {
             Shutdown();
             return;
@@ -58,12 +72,13 @@ public partial class App : Application
         new MainWindow(MainViewModel.CreateForStartup(initialFolder)).Show();
     }
 
-    /// <summary>引数をフォルダーパスとして解釈する (違うものは null)。
-    /// ドライブルートは `"C:\"` の末尾 \ が閉じ引用符をエスケープして `C:"` で届くため補正する。</summary>
+    /// <summary>引数をフォルダーパスとして解釈する (扱えないものは null)。
+    /// ドライブルートは `"C:\"` の末尾 \ が閉じ引用符をエスケープして `C:"` で届くため補正する。
+    /// ファイルのパスは親フォルダーとして解釈する (「エクスプローラーで表示」系の保険)。</summary>
     private static string? NormalizeFolderArg(string raw)
     {
         var path = raw.Trim().Trim('"');
-        if (path.Length == 0 || path.StartsWith("--", StringComparison.Ordinal))
+        if (path.Length == 0)
             return null;
         if (path.Length == 2 && char.IsLetter(path[0]) && path[1] == ':')
             path += "\\";
@@ -75,11 +90,35 @@ public partial class App : Application
         {
             return null;
         }
-        return Directory.Exists(path) ? path : null;
+        if (Directory.Exists(path))
+            return path;
+        if (File.Exists(path))
+            return Path.GetDirectoryName(path);
+        return null;
     }
 
-    /// <summary>別プロセスから転送されたフォルダーを、最後に使ったウィンドウの新タブで開く。</summary>
-    private void OpenFolderInExistingWindow(string folder)
+    /// <summary>仮想フォルダー等、ColumnView が表示できないものを本物のエクスプローラーで開く。
+    /// explorer.exe の直接起動は Folder verb を再解決しない (仮想フォルダーはシェル内部処理) ので無限ループしない。</summary>
+    private static void PassThroughToExplorer(string arg)
+    {
+        try
+        {
+            var explorer = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe");
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(explorer, $"\"{arg}\"")
+            {
+                UseShellExecute = false,
+            });
+        }
+        catch
+        {
+            // 開けなければ諦める (エラーダイアログの連鎖を避ける)
+        }
+    }
+
+    /// <summary>別プロセスから転送された要求を、最後に使ったウィンドウの新タブで開く。
+    /// message はフォルダーパスか、ホーム要求 (SingleInstance.HomeRequest)。</summary>
+    private void OpenFolderInExistingWindow(string message)
     {
         Dispatcher.InvokeAsync(() =>
         {
@@ -88,7 +127,7 @@ public partial class App : Application
                 ? w
                 : Windows.OfType<ColumnView.MainWindow>().FirstOrDefault();
             if (window is not null)
-                _ = window.OpenFolderTabAsync(folder);
+                _ = window.OpenFolderTabAsync(message == SingleInstance.HomeRequest ? null : message);
         });
     }
 

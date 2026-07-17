@@ -40,9 +40,9 @@ public partial class MainWindow : Window
         _vm.PreviewFollow = FollowQuickLook;
     }
 
-    /// <summary>別プロセス (フォルダーのダブルクリック等) から渡されたフォルダーを
-    /// 新しいタブで開き、ウィンドウを前面に出す。</summary>
-    public async Task OpenFolderTabAsync(string path)
+    /// <summary>別プロセス (フォルダーのダブルクリックや Win+E) から渡されたフォルダーを
+    /// 新しいタブで開き、ウィンドウを前面に出す。null はホームタブ。</summary>
+    public async Task OpenFolderTabAsync(string? path)
     {
         if (WindowState == WindowState.Minimized)
             WindowState = WindowState.Normal;
