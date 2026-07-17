@@ -12,6 +12,10 @@ internal static class SingleInstance
     /// <summary>先着判定用ミューテックス名 (Local\ = 同一ログオンセッション内)。</summary>
     public static string MutexName => @"Local\ColumnView.SingleInstance";
 
+    /// <summary>「ホームを開いて前面に出して」の要求 (Win+E や引数なし起動)。
+    /// ":" を含むこの形は実在パスと衝突しない。</summary>
+    public const string HomeRequest = "::home";
+
     // ユーザー名とセッション ID を含めて他ユーザー/他セッションと衝突させない
     private static string PipeName =>
         $"ColumnView.OpenFolder.{Environment.UserName}.{System.Diagnostics.Process.GetCurrentProcess().SessionId}";
@@ -50,9 +54,9 @@ internal static class SingleInstance
                         PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
                     await server.WaitForConnectionAsync();
                     using var reader = new StreamReader(server, Encoding.UTF8);
-                    var folder = (await reader.ReadToEndAsync()).Trim();
-                    if (folder.Length > 0 && Directory.Exists(folder))
-                        onFolder(folder);
+                    var message = (await reader.ReadToEndAsync()).Trim();
+                    if (message == HomeRequest || (message.Length > 0 && Directory.Exists(message)))
+                        onFolder(message);
                 }
                 catch
                 {
