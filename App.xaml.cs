@@ -1,5 +1,7 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -9,6 +11,25 @@ public partial class App : Application
 {
     // 単一インスタンス判定用。プロセス終了まで握りっぱなしにする (GC 回収防止のため保持)
     private static Mutex? _instanceMutex;
+
+    // ---- グローバルホットキー (Ctrl+E: ColumnView を呼び出す) ----
+    // Win+E はこの Windows ビルドでは explorer.exe が自プロセス内で完結させるため
+    // レジストリからもフックからも横取り不能 (v1.6b 参照)。代わりにアプリ側で
+    // RegisterHotKey する Ctrl+E を採用。表示専用の非表示ウィンドウを1つ持ち、
+    // そこにだけ登録する (RegisterHotKey は同一スレッド内で同じキー組み合わせを
+    // 二重登録できないため、複数の MainWindow それぞれに登録するのは不可)。
+    private Window? _hotkeyWindow;
+    private const int HotkeyId = 0xA1F0;
+    private const int WM_HOTKEY = 0x0312;
+    private const uint MOD_CONTROL = 0x0002;
+    private const uint MOD_NOREPEAT = 0x4000; // キーリピートで連打されないようにする
+    private const uint VK_E = 0x45;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool RegisterHotKey(nint hWnd, int id, uint fsModifiers, uint vk);
+
+    [DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(nint hWnd, int id);
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -61,6 +82,8 @@ public partial class App : Application
         }
         if (isFirst)
             SingleInstance.StartServer(OpenFolderInExistingWindow);
+
+        RegisterGlobalHotkey();
 
         // Windows の「アプリのモード」(ライト/ダーク) に追従
         ApplySystemTheme();
@@ -131,9 +154,49 @@ public partial class App : Application
         });
     }
 
+    /// <summary>見えないウィンドウを1つ作り、そのハンドルへ Ctrl+E を登録する。
+    /// 表示専用ウィンドウを可視化せずハンドルだけ得るのに WindowInteropHelper.EnsureHandle を使う。</summary>
+    private void RegisterGlobalHotkey()
+    {
+        try
+        {
+            _hotkeyWindow = new Window
+            {
+                Width = 0,
+                Height = 0,
+                WindowStyle = WindowStyle.None,
+                ShowInTaskbar = false,
+                Visibility = Visibility.Hidden,
+            };
+            var hwnd = new WindowInteropHelper(_hotkeyWindow).EnsureHandle();
+            HwndSource.FromHwnd(hwnd)?.AddHook(HotkeyWndProc);
+            RegisterHotKey(hwnd, HotkeyId, MOD_CONTROL | MOD_NOREPEAT, VK_E);
+        }
+        catch
+        {
+            // 取得できなくてもアプリ本体は使えるので致命的にしない
+        }
+    }
+
+    private nint HotkeyWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
+    {
+        if (msg == WM_HOTKEY && wParam.ToInt32() == HotkeyId)
+        {
+            handled = true;
+            OpenFolderInExistingWindow(SingleInstance.HomeRequest);
+        }
+        return nint.Zero;
+    }
+
     protected override void OnExit(ExitEventArgs e)
     {
         base.OnExit(e);
+        if (_hotkeyWindow is not null)
+        {
+            var hwnd = new WindowInteropHelper(_hotkeyWindow).Handle;
+            if (hwnd != nint.Zero)
+                UnregisterHotKey(hwnd, HotkeyId);
+        }
         // 終了保険: メディア基盤 (MF) やシェル拡張・WinRT が残したスレッドが
         // プロセスを生かし続けると「ウィンドウは無いのに exe がロックされたまま」になる。
         // 正常なら OnExit 後すぐプロセスは消える (このスレッドは background なので
