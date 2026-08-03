@@ -1889,6 +1889,11 @@ public partial class MainWindow : Window
                     CycleTab(-1);
                     e.Handled = true;
                     break;
+                case Key.T:
+                    // 直前に閉じたタブを開き直す (ブラウザ / エクスプローラーと同じ)
+                    e.Handled = true;
+                    await _vm.ReopenClosedTabAsync();
+                    break;
                 case Key.N:
                     e.Handled = true;
                     await NewFolderFlow();

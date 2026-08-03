@@ -738,10 +738,13 @@ public class MainViewModel : ObservableObject
         _settings.Save();
     }
 
-    public async Task NewTabAsync(string? path)
+    public Task NewTabAsync(string? path) => NewTabAsync(path, Tabs.Count);
+
+    /// <summary>タブを指定位置に開く (末尾以外は「閉じたタブを開き直す」用)。</summary>
+    public async Task NewTabAsync(string? path, int index)
     {
         var tab = new TabModel();
-        Tabs.Add(tab);
+        Tabs.Insert(Math.Clamp(index, 0, Tabs.Count), tab);
         ActiveTab = tab;
         await ResetTabAsync(tab, path);
         PushHistory(tab, path);
@@ -758,11 +761,46 @@ public class MainViewModel : ObservableObject
         }
     }
 
+    // ---- 閉じたタブの復元 (Ctrl+Shift+T) ----
+
+    /// <summary>閉じたタブの控え (新しいものが末尾)。全ウィンドウで共有するので、
+    /// 最後のタブを閉じてウィンドウごと消えた場合も別のウィンドウで開き直せる。</summary>
+    private static readonly List<(string? Path, int Index)> _closedTabs = new();
+
+    private const int ClosedTabLimit = 10;
+
+    /// <summary>閉じたタブを「最深フォルダ + タブ列での位置」に畳んで控える。
+    /// 列の重なりまでは覚えない (SaveSession と同じ粒度。開き直したフォルダから
+    /// 改めて潜れれば足りるうえ、検索列やグループ列は元から再現できないため)。</summary>
+    private void RememberClosedTab(TabModel tab, int index)
+    {
+        _closedTabs.Add((tab.Columns.LastOrDefault(c => c.Path is not null)?.Path, index));
+        if (_closedTabs.Count > ClosedTabLimit)
+            _closedTabs.RemoveAt(0);
+    }
+
+    /// <summary>直前に閉じたタブをこのウィンドウの元の位置に開き直す (別ウィンドウで
+    /// 閉じたものは位置が丸められる)。すでに消えたフォルダの控えは捨てて、さらに前の
+    /// 控えへさかのぼる (控えが尽きたら何もしない)。</summary>
+    public async Task ReopenClosedTabAsync()
+    {
+        while (_closedTabs.Count > 0)
+        {
+            var (path, index) = _closedTabs[^1];
+            _closedTabs.RemoveAt(_closedTabs.Count - 1);
+            if (path is not null && !Directory.Exists(path))
+                continue;
+            await NewTabAsync(path, index);
+            return;
+        }
+    }
+
     public void CloseTab(TabModel tab)
     {
         var index = Tabs.IndexOf(tab);
         if (index < 0)
             return;
+        RememberClosedTab(tab, index);
         var wasActive = ActiveTab == tab;
         Tabs.Remove(tab);
         TrimColumns(tab, 0);
