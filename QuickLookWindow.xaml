@@ -210,10 +210,15 @@
                 </StackPanel>
             </Grid>
 
-            <!-- ホバー時だけ現れる閉じるボタン (唯一の装飾)。 -->
+            <!-- ホバー時だけ現れる閉じるボタン (唯一の装飾)。
+                 Focusable="False" は必須。既定の Button は押下時に自分へフォーカスを
+                 移すが、このウィンドウは非アクティブ前提 (WS_EX_NOACTIVATE) なので
+                 フォーカス移動でウィンドウがアクティブ化され、直後にメインウィンドウへ
+                 戻す処理でマウスキャプチャを失い、Click が発火しなくなる -->
             <Button x:Name="CloseButton" Width="28" Height="28" Margin="10"
                     HorizontalAlignment="Right" VerticalAlignment="Top"
                     Opacity="0" IsHitTestVisible="False" Cursor="Hand"
+                    Focusable="False" IsTabStop="False"
                     Click="CloseButton_Click" FontFamily="{StaticResource IconFont}"
                     FontSize="10" Content="&#xE8BB;">
                 <Button.Template>
