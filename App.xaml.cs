@@ -269,6 +269,10 @@ public partial class App : Application
             Set("AccentCrumbHoverBrush", "#26D97757");
             Set("AccentDropHighlightBrush", "#40D97757");
             Set("AccentDropBorderBrush", "#B3D97757");
+            Set("DropCopyAccentBrush", "#7BC49A");
+            Set("DropCopyTintBrush", "#337BC49A");
+            Set("DropMoveAccentBrush", "#7FB2E5");
+            Set("DropMoveTintBrush", "#337FB2E5");
             Set("WindowBackgroundBrush", "#262421");
             Set("SurfaceBrush", "#37342F");
             Set("CaptionBarBrush", "#161412");
@@ -301,6 +305,10 @@ public partial class App : Application
             Set("AccentCrumbHoverBrush", "#15C96442");
             Set("AccentDropHighlightBrush", "#2EC96442");
             Set("AccentDropBorderBrush", "#99C96442");
+            Set("DropCopyAccentBrush", "#2E7D50");
+            Set("DropCopyTintBrush", "#1F2E7D50");
+            Set("DropMoveAccentBrush", "#2B6CB0");
+            Set("DropMoveTintBrush", "#1F2B6CB0");
             Set("WindowBackgroundBrush", "#FCFAF7");
             Set("SurfaceBrush", "#FFFFFE");
             Set("CaptionBarBrush", "#F1ECE2");

@@ -12,6 +12,15 @@
         <SolidColorBrush x:Key="AccentDropHighlightBrush" Color="#2EC96442"/>
         <SolidColorBrush x:Key="AccentDropBorderBrush" Color="#99C96442"/>
 
+        <!-- ドラッグ中のゴーストが「今ドロップしたら何が起きるか」を示す色。
+             Copy = 緑 (元が残る)、Move = 青 (元が消える)。操作が未確定のときは
+             アクセントのテラコッタを流用するので、この 2 色はアクセントと明確に別系統にする。
+             Accent = 枠線とバッジ文字、Tint = バッジの塗り。 -->
+        <SolidColorBrush x:Key="DropCopyAccentBrush" Color="#2E7D50"/>
+        <SolidColorBrush x:Key="DropCopyTintBrush" Color="#1F2E7D50"/>
+        <SolidColorBrush x:Key="DropMoveAccentBrush" Color="#2B6CB0"/>
+        <SolidColorBrush x:Key="DropMoveTintBrush" Color="#1F2B6CB0"/>
+
         <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FCFAF7"/>
         <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFE"/>
         <SolidColorBrush x:Key="CaptionBarBrush" Color="#F1ECE2"/>

@@ -1217,7 +1217,11 @@ public partial class MainWindow : Window
         StartDragWheelHook();
         try
         {
-            DragDrop.DoDragDrop(src, data, DragDropEffects.Copy | DragDropEffects.Move);
+            // Link も許可する。許可していない効果はどのドロップ先も返せないため、
+            // これが無いと Ctrl+Shift ドラッグ (ショートカット作成) が外部アプリでも成立しない。
+            // 自アプリの列は ResolveDropEffect が Copy/Move しか返さないので挙動は変わらない。
+            DragDrop.DoDragDrop(src, data,
+                DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
         }
         finally
         {
@@ -1275,6 +1279,9 @@ public partial class MainWindow : Window
 
     private void ShowDragGhost(ImageSource? icon, string name, int count, Point grabOffset)
     {
+        // 最初の GiveFeedback は Column_DragOver より先に来ることがある。
+        // 前回のドラッグの値で 1 フレーム描かないよう、掴んだ時点で倒しておく
+        _dropIsNoOp = false;
         _dragGhost ??= new DragGhostWindow { Owner = this };
         _dragGhost.SetContent(icon, name, count, grabOffset);
         _dragGhost.MoveToCursor();
@@ -1286,8 +1293,20 @@ public partial class MainWindow : Window
 
     /// <summary>OLE ドラッグ中はマウスイベントが来ないため、GiveFeedback (連続発火する)
     /// に乗ってゴーストを追従させる。カーソル形状は既定 (移動/コピー/禁止) のまま。</summary>
+    /// <remarks>
+    /// e.Effects はドロップ先が今この瞬間に返している効果で、Ctrl/Shift の押し替えにも追従する。
+    /// これをゴーストへ渡し、OS の小さなカーソルバッジより目立つ形で可否を見せる。
+    /// </remarks>
     private void DragSource_GiveFeedback(object sender, GiveFeedbackEventArgs e)
-        => _dragGhost?.MoveToCursor();
+    {
+        _dragGhost?.SetEffect(e.Effects, _dropIsNoOp); // 変化が無ければ内部で早期 return する
+        _dragGhost?.MoveToCursor();
+    }
+
+    /// <summary>自アプリの列にいて、かつ離しても何も起きない状態か。
+    /// Column_DragOver が更新し、列から出たら Column_DragLeave が下ろす
+    /// (他アプリの上では常に false = 相手が返した効果をそのまま見せる)。</summary>
+    private bool _dropIsNoOp;
 
     // ---- ドラッグ中のスクロール ----
 
@@ -1432,6 +1451,10 @@ public partial class MainWindow : Window
         StartDragWheelHook(); // 他アプリ発のドラッグでもホイールスクロールを効かせる
         DragEdgeAutoScroll(sender, e);
 
+        // 以降の分岐で必ず決め直す。ここで倒しておかないと、下の早期 return を通る
+        // ドラッグ (お気に入り並べ替え / グループ追加) が前回の値を引きずる
+        _dropIsNoOp = false;
+
         if (e.Data.GetDataPresent(HomeFormat))
         {
             var key = e.Data.GetData(HomeFormat) as string ?? "";
@@ -1453,8 +1476,30 @@ public partial class MainWindow : Window
         }
 
         e.Effects = ResolveDropEffect(sender, e);
+        // 返す効果はエクスプローラーと同じにしておき (ここで None を返すと本家が出さない
+        // 禁止カーソルが出てしまう)、実際に何かが起きるかはゴーストの見た目だけに反映する
+        _dropIsNoOp = IsNoOpDrop(sender, e, e.Effects);
         UpdateDropHighlight(e);
         e.Handled = true;
+    }
+
+    /// <summary>今離しても実際には何も起きないドロップか (元と同じフォルダへの移動)。</summary>
+    /// <remarks>
+    /// エクスプローラーもこの場合ドロップ自体は受け付け、素の矢印 (= 移動) を出す。
+    /// ColumnView も同じ効果を返すが、[FileOps.Transfer](FileOps.cs) が同一フォルダへの
+    /// 移動をスキップする以上、ゴーストに「移動」と書くのは嘘になるので分けて持つ。
+    /// </remarks>
+    private static bool IsNoOpDrop(object sender, DragEventArgs e, DragDropEffects effect)
+    {
+        if (effect != DragDropEffects.Move || !e.Data.GetDataPresent(DataFormats.FileDrop))
+            return false;
+        if (ResolveTargetDir(sender, e) is not { } targetDir)
+            return false;
+        var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
+        return sources.Length > 0 && sources.All(s => string.Equals(
+            System.IO.Path.GetDirectoryName(s.TrimEnd(System.IO.Path.DirectorySeparatorChar,
+                                                      System.IO.Path.AltDirectorySeparatorChar)),
+            targetDir, StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>FileDrop のフォルダがグループ見出しの上にあるなら、その見出しコンテナを返す。</summary>
@@ -1475,6 +1520,7 @@ public partial class MainWindow : Window
         // 一瞬入るたびに外すとチラつくため、終了は DoDragDrop の finally に任せる)
         if (!_isDragging)
             StopDragWheelHook();
+        _dropIsNoOp = false; // 他アプリの上では相手が返した効果をそのまま見せる
         ClearDropHighlight();
         ClearInsertIndicator();
     }
@@ -1529,7 +1575,7 @@ public partial class MainWindow : Window
 
         var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
         e.Handled = true;
-        await _vm.HandleDropAsync(sources, targetDir, copy: effect == DragDropEffects.Copy);
+        await _vm.HandleDropAsync(sources, targetDir, ToDropMode(effect));
     }
 
     /// <summary>ドロップ先フォルダ: カーソル下がフォルダならそれ、なければ列のフォルダ。</summary>
@@ -1541,6 +1587,13 @@ public partial class MainWindow : Window
         return (sender as ListBox)?.DataContext is ColumnModel { Path: { } path } ? path : null;
     }
 
+    private static DropMode ToDropMode(DragDropEffects effect) => effect switch
+    {
+        DragDropEffects.Copy => DropMode.Copy,
+        DragDropEffects.Link => DropMode.Link,
+        _ => DropMode.Move,
+    };
+
     private static DragDropEffects ResolveDropEffect(object sender, DragEventArgs e)
     {
         if (!e.Data.GetDataPresent(DataFormats.FileDrop))
@@ -1549,8 +1602,17 @@ public partial class MainWindow : Window
         if (targetDir is null)
             return DragDropEffects.None;
 
+        // Alt / Ctrl+Shift はショートカット作成 (エクスプローラーと同じ)。
+        // 元と同じフォルダでも別名の .lnk を作るので成立する。
+        if (e.KeyStates.HasFlag(DragDropKeyStates.AltKey)
+            || (e.KeyStates.HasFlag(DragDropKeyStates.ControlKey)
+                && e.KeyStates.HasFlag(DragDropKeyStates.ShiftKey)))
+            return DragDropEffects.Link;
+
+        // 同じフォルダへの Ctrl+ドラッグは「◯◯ - コピー」を作るので成立する (FileOps.Transfer)
         if (e.KeyStates.HasFlag(DragDropKeyStates.ControlKey))
             return DragDropEffects.Copy;
+
         if (e.KeyStates.HasFlag(DragDropKeyStates.ShiftKey))
             return DragDropEffects.Move;
 
