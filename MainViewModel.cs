@@ -1009,12 +1009,13 @@ public class MainViewModel : ObservableObject
         await RefreshColumnsAsync(affected);
     }
 
-    private static void PushTransferUndo(List<(string Source, string Dest)> performed, bool copy)
+    private static void PushTransferUndo(List<(string Source, string Dest)> performed, bool copy,
+                                         string label = "コピー")
     {
         if (performed.Count == 0)
             return;
         UndoStack.Push(copy
-            ? new RecycleOp(performed.Select(p => p.Dest).ToList(), "コピー")
+            ? new RecycleOp(performed.Select(p => p.Dest).ToList(), label)
             : new MoveOp(performed));
     }
 
@@ -1179,14 +1180,24 @@ public class MainViewModel : ObservableObject
 
     // ---- ドラッグ&ドロップ ----
 
-    public async Task HandleDropAsync(string[] sources, string targetDir, bool copy)
+    public async Task HandleDropAsync(string[] sources, string targetDir, DropMode mode)
     {
-        var affected = FileOps.Transfer(sources, targetDir, copy, out var error, out var performed);
-        PushTransferUndo(performed, copy);
+        bool copy = mode == DropMode.Copy;
+        var affected = mode == DropMode.Link
+            ? FileOps.CreateShortcuts(sources, targetDir, out var error, out var performed)
+            : FileOps.Transfer(sources, targetDir, copy, out error, out performed);
+        // リンクもコピーと同じく「作られたものを消す」ことで元に戻せる
+        PushTransferUndo(performed, copy: mode != DropMode.Move,
+                         label: mode == DropMode.Link ? "ショートカット作成" : "コピー");
         if (error is not null)
             StatusText = error;
         else if (performed.Count > 0)
-            StatusText = copy ? $"コピーしました → {targetDir}" : $"移動しました → {targetDir}";
+            StatusText = mode switch
+            {
+                DropMode.Link => $"ショートカットを作成しました → {targetDir}",
+                DropMode.Copy => $"コピーしました → {targetDir}",
+                _ => $"移動しました → {targetDir}",
+            };
         // 実際に何か動いたときだけ再読込する。同じフォルダへの移動などの no-op で
         // 列を作り直すと、ドラッグ前の複数選択が単一復元に潰れてしまう
         if (performed.Count > 0)

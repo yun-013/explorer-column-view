@@ -16,6 +16,39 @@ public static class FileOps
     /// 戻り値は再読み込みすべきフォルダ (移動元の親と移動先)。
     /// <paramref name="performed"/> に実際に処理できた (元, 先) を返す (Ctrl+Z 用)。
     /// </summary>
+    /// <summary>
+    /// <paramref name="sources"/> のショートカット (.lnk) を <paramref name="targetDir"/> に作る。
+    /// 戻り値・<paramref name="performed"/> の意味は <see cref="Transfer"/> と同じ
+    /// (performed の Dest が作成した .lnk なので、取り消しはそれを消せばよい)。
+    /// </summary>
+    public static IReadOnlyCollection<string> CreateShortcuts(
+        IEnumerable<string> sources, string targetDir,
+        out string? error, out List<(string Source, string Dest)> performed)
+    {
+        error = null;
+        performed = new List<(string, string)>();
+
+        foreach (var src in sources)
+        {
+            try
+            {
+                var trimmed = src.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                var name = Path.GetFileName(trimmed);
+                if (string.IsNullOrEmpty(name))
+                    continue;
+
+                var link = Shortcut.UniqueLinkPath(targetDir, name, Directory.Exists(src));
+                Shortcut.Create(trimmed, link);
+                performed.Add((trimmed, link));
+            }
+            catch (Exception ex)
+            {
+                error = ex.Message;
+            }
+        }
+        return new[] { targetDir };
+    }
+
     public static IReadOnlyCollection<string> Transfer(
         IEnumerable<string> sources, string targetDir, bool copy,
         out string? error, out List<(string Source, string Dest)> performed)

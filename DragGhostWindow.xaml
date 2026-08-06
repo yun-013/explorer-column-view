@@ -35,10 +35,11 @@
                 <TranslateTransform X="4" Y="4"/>
             </Border.RenderTransform>
         </Border>
-        <!-- 掴んでいる項目本体 -->
-        <Border Background="{DynamicResource SurfaceBrush}"
+        <!-- 掴んでいる項目本体。BorderBrush はドロップ効果に応じて SetEffect が差し替える -->
+        <Border x:Name="Card"
+                Background="{DynamicResource SurfaceBrush}"
                 BorderBrush="{DynamicResource AccentDropBorderBrush}"
-                BorderThickness="1"
+                BorderThickness="1.5"
                 CornerRadius="8"
                 Padding="8,6"
                 Effect="{DynamicResource MenuShadow}">
@@ -47,6 +48,24 @@
                 <TextBlock x:Name="NameText" VerticalAlignment="Center"
                            Foreground="{DynamicResource TextPrimaryBrush}"
                            MaxWidth="240" TextTrimming="CharacterEllipsis"/>
+                <!-- 「今離したら何が起きるか」のピル。OS の小さなカーソルバッジより先に目に入る位置。
+                     幅が変わるとカードが伸縮するため、更新は効果が実際に変わったときだけ行う
+                     (DragGhostWindow.SetEffect を参照) -->
+                <Border x:Name="EffectBadge"
+                        CornerRadius="9" Height="18"
+                        Margin="8,0,0,0" Padding="6,0"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <TextBlock x:Name="EffectGlyph"
+                                   FontFamily="{DynamicResource IconFont}"
+                                   FontSize="9" Margin="0,0,4,0"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="EffectText"
+                                   FontSize="11" FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
             </StackPanel>
         </Border>
         <!-- 複数選択時の件数バッジ (カードの右上角に重ねる) -->

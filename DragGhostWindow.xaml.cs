@@ -37,6 +37,11 @@ public partial class DragGhostWindow : Window
     /// ことで「行をそのまま持ち上げた」ように見える。カード外にはみ出す値はクランプする。</summary>
     private Point _grabOffset = new(36, 14);
 
+    /// <summary>直前に描画したドロップ効果。GiveFeedback はマウスが止まっていても連続発火するため、
+    /// 変化したときだけ描き直さないとカードが毎フレーム再レイアウトされて微振動する。
+    /// ドラッグ開始時は「まだ一度も描いていない」を表す null にリセットする。</summary>
+    private DropIntent? _intent;
+
     /// <summary>XAML の外周 Grid Margin (左上)。カードの左上はウィンドウ原点からこの分ずれている。</summary>
     private const double PadLeft = 10, PadTop = 10;
     /// <summary>同 (右下)。カード実寸 = ウィンドウ実寸 − これら。</summary>
@@ -76,6 +81,120 @@ public partial class DragGhostWindow : Window
         CountBadge.Visibility = multi;
         if (count > 1)
             CountText.Text = count.ToString();
+
+        _intent = null; // 新しいドラッグ。次の SetEffect で必ず描き直す
+        SetEffect(DragDropEffects.None);
+    }
+
+    /// <summary>ドロップ先が今返している効果をカードの見た目へ反映する
+    /// (GiveFeedback のたびに呼ぶ。変化が無ければ何もしない)。</summary>
+    /// <param name="noOp">効果としては受理されるが、離しても実際には何も起きない場合に true。
+    /// OLE に返す効果はエクスプローラーと揃えたまま、表示だけ「何も起きない」側へ寄せる。</param>
+    public void SetEffect(DragDropEffects effects, bool noOp = false)
+    {
+        if (noOp)
+        {
+            SetIntent(DropIntent.None);
+            return;
+        }
+
+        // Scroll (最上位ビット) は「ターゲットが自動スクロール中」を表すフラグで操作ではない。
+        // 操作ビットだけを取り出してから判定する。
+        var ops = effects & (DragDropEffects.Copy | DragDropEffects.Move | DragDropEffects.Link);
+
+        // 操作が 1 つに定まるときだけ操作名を出す。複数立っている = ドロップ先が
+        // 「どれでもよい」と返している状態で、実際どうなるかは離した瞬間に決まるため断定しない。
+        var intent = ops switch
+        {
+            DragDropEffects.None => DropIntent.None,
+            DragDropEffects.Copy => DropIntent.Copy,
+            DragDropEffects.Move => DropIntent.Move,
+            DragDropEffects.Link => DropIntent.Link,
+            _ => DisambiguateByModifiers(ops),
+        };
+        SetIntent(intent);
+    }
+
+    private void SetIntent(DropIntent intent)
+    {
+        if (_intent == intent)
+            return;
+        _intent = intent;
+
+        ApplyIntentVisual(intent);
+
+        // バッジの文字数が変われば SizeToContent でカード幅が変わる。掴み位置のクランプは
+        // ActualWidth を見ているので、実寸を確定させてから置き直さないと一瞬ずれる。
+        UpdateLayout();
+        MoveToCursor();
+    }
+
+    /// <summary>ドロップ先が複数の操作を返してきたとき、修飾キーで 1 つに絞り込む。
+    /// 絞り込めなければ <see cref="DropIntent.Ambiguous"/> のまま返す。</summary>
+    /// <remarks>
+    /// Ctrl = コピー / Shift = 移動 / Alt もしくは Ctrl+Shift = リンク は OS 共通の取り決めで、
+    /// ドロップ先はこれに従う義務がある。よってキーが押されている間は、ターゲットが
+    /// マスクを返していても実際に起きる操作を確定できる。
+    /// GiveFeedbackEventArgs はキー状態を持たないので OS へ直接問い合わせる
+    /// (OLE のモーダルループ中は WPF の Keyboard.Modifiers が古い値のことがある)。
+    /// </remarks>
+    private static DropIntent DisambiguateByModifiers(DragDropEffects ops)
+    {
+        bool ctrl = IsKeyDown(VK_CONTROL);
+        bool shift = IsKeyDown(VK_SHIFT);
+        bool alt = IsKeyDown(VK_MENU);
+
+        // リンクは Alt 単独でも Ctrl+Shift でも作れる (エクスプローラーと同じ)
+        if ((alt || (ctrl && shift)) && ops.HasFlag(DragDropEffects.Link))
+            return DropIntent.Link;
+        if (ctrl && !shift && !alt && ops.HasFlag(DragDropEffects.Copy))
+            return DropIntent.Copy;
+        if (shift && !ctrl && !alt && ops.HasFlag(DragDropEffects.Move))
+            return DropIntent.Move;
+        return DropIntent.Ambiguous;
+    }
+
+    private const int VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12;
+
+    private static bool IsKeyDown(int vk) => (GetKeyState(vk) & 0x8000) != 0;
+
+    /// <summary>ドロップ効果ごとの見た目 (枠色・バッジ・不透明度) を決める。</summary>
+    private void ApplyIntentVisual(DropIntent intent)
+    {
+        if (intent == DropIntent.None)
+        {
+            // 既定の姿。「今離しても何も起きない」場所はすべてここに落ちる —
+            // 掴んだ直後 (元のフォルダの上) も、受け付けないターゲットの上も同じ状態で、
+            // 利用者から見た結果が同じである以上、見た目を分ける理由がない。
+            // 置けないことの明示は OS の禁止カーソルに任せる。
+            Card.BorderBrush = (Brush)FindResource("AccentDropBorderBrush");
+            EffectBadge.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        // ここから先は「何かが起きる」場所。バッジが出ていること自体が受理の合図で、
+        // 色は結果の種類を表す。緑 = 元が残る (コピー / リンク)、青 = 元が消える (移動)、
+        // オレンジ = 受け付けるが操作は離すまで確定しない。
+        var (accentKey, tintKey) = intent switch
+        {
+            DropIntent.Move => ("DropMoveAccentBrush", "DropMoveTintBrush"),
+            DropIntent.Ambiguous => ("AccentBrush", "AccentSelectHoverBrush"),
+            _ => ("DropCopyAccentBrush", "DropCopyTintBrush"),
+        };
+        var accent = (Brush)FindResource(accentKey);
+
+        Card.BorderBrush = accent;
+        EffectBadge.Background = (Brush)FindResource(tintKey);
+        EffectBadge.Visibility = Visibility.Visible;
+        EffectGlyph.Foreground = accent;
+        EffectText.Foreground = accent;
+        (EffectGlyph.Text, EffectText.Text) = intent switch
+        {
+            DropIntent.Move => ("\uE72A", "移動"),   // Forward
+            DropIntent.Link => ("\uE71B", "リンク"), // Link
+            DropIntent.Ambiguous => ("\uE896", "ドロップ"), // Download
+            _ => ("\uE710", "コピー"),               // Add
+        };
     }
 
     /// <summary>現在のマウスカーソル位置へ追従させる (GiveFeedback のたびに呼ぶ)。</summary>
@@ -146,6 +265,9 @@ public partial class DragGhostWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern short GetKeyState(int nVirtKey);
 
     [DllImport("user32.dll")]
     private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
