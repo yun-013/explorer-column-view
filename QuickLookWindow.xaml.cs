@@ -540,14 +540,22 @@ public partial class QuickLookWindow : Window
         if (e.ButtonState != MouseButtonState.Pressed)
             return;
 
-        // このウィンドウは決してアクティブにならない (WS_EX_NOACTIVATE) ので、
-        // 他アプリを使った後にプレビューをクリックしてもキーボードフォーカスは
-        // 他アプリに残ったままになる。クリックでメインウィンドウを明示的に
-        // アクティブ化し、Space / Esc / ↑↓ が再び効くようにする
-        ActivateOwnerAndFocusColumn();
+        var src = e.OriginalSource as DependencyObject;
 
-        if (e.OriginalSource is DependencyObject src
-            && (IsDescendantOf(src, MediaBar) || IsDescendantOf(src, CloseButton)))
+        // 閉じるボタンの押下中に他ウィンドウをアクティブ化してはいけない。
+        // Button が取ったマウスキャプチャを Windows が剥奪し (WM_CAPTURECHANGED)、
+        // 押下が取り消されて Click が発火しなくなる。列へのフォーカス復帰は
+        // 閉じた後に CloseButton_Click 側で行う
+        if (src is null || !IsDescendantOf(src, CloseButton))
+        {
+            // このウィンドウは決してアクティブにならない (WS_EX_NOACTIVATE) ので、
+            // 他アプリを使った後にプレビューをクリックしてもキーボードフォーカスは
+            // 他アプリに残ったままになる。クリックでメインウィンドウを明示的に
+            // アクティブ化し、Space / Esc / ↑↓ が再び効くようにする
+            ActivateOwnerAndFocusColumn();
+        }
+
+        if (src is not null && (IsDescendantOf(src, MediaBar) || IsDescendantOf(src, CloseButton)))
             return;
         if (!GetCursorPos(out _dragStartCursor))
             return;
@@ -783,6 +791,10 @@ public partial class QuickLookWindow : Window
         _showGen++; // 遅れて完了した読み込みが再表示しないように
         _mediaTimer.Stop();
         StopMedia();
+        // マウスがカードの上にあるまま閉じたとき、次に開いた瞬間から閉じるボタンが
+        // 出たままにならないよう、ホバー状態を明示的に戻しておく
+        CloseButton.Opacity = 0;
+        CloseButton.IsHitTestVisible = false;
         Hide();
     }
 
