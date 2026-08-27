@@ -848,6 +848,8 @@ public class ColumnModel : ObservableObject, IDisposable
         AddKnown("ダウンロード", System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"));
         AddKnown("ドキュメント", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
         AddKnown("ピクチャ", Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
+        AddKnown("ビデオ", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
+        AddKnown("ミュージック", Environment.GetFolderPath(Environment.SpecialFolder.MyMusic));
         AddKnown("ホーム", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
 
         // クラウド同期ルート (OneDrive / Google ドライブ / Nextcloud / Dropbox 等) を
