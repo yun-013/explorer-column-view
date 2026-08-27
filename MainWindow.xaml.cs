@@ -51,6 +51,30 @@ public partial class MainWindow : Window
         await _vm.NewTabAsync(path);
     }
 
+    /// <summary>新しいウィンドウを開く (Ctrl+N / タスクバーのジャンプリスト)。
+    /// 起動時と違いセッション復元はせず、path (null ならホーム) のタブ 1 枚で始める。
+    /// 位置は指定せず OS の既定位置 (カスケード) に任せ、大きさだけ元のウィンドウに合わせる。</summary>
+    public static MainWindow OpenNewWindow(string? path, Window? sizeFrom = null)
+    {
+        var vm = new MainViewModel(createInitialTab: false);
+        _ = vm.NewTabAsync(path);   // タブの挿入自体は同期なので Show() 前で問題ない
+
+        var window = new MainWindow(vm);
+        if (sizeFrom is not null)
+        {
+            // 最大化中は Width/Height が復元前の値を返さないので RestoreBounds を使う
+            var bounds = sizeFrom.RestoreBounds;
+            if (bounds.Width > 0 && bounds.Height > 0)
+            {
+                window.Width = bounds.Width;
+                window.Height = bounds.Height;
+            }
+        }
+        window.Show();
+        window.Activate();
+        return window;
+    }
+
     // ---- Quick Look プレビュー (スペースキー) ----
 
     private QuickLookWindow? _quickLook;
@@ -1983,6 +2007,11 @@ public partial class MainWindow : Window
                 break;
             case Key.T:
                 await _vm.NewTabAsync(null);
+                e.Handled = true;
+                break;
+            case Key.N:
+                // エクスプローラーと同じく、現在のフォルダーを新しいウィンドウで開く
+                OpenNewWindow(_vm.FavoriteTarget, this);
                 e.Handled = true;
                 break;
             case Key.W:
