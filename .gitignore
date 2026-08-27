@@ -12,3 +12,6 @@ publish/
 # OS
 Thumbs.db
 desktop.ini
+
+# 調査用スクリプトの出力
+measure-idle.log
