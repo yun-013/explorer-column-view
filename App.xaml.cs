@@ -35,6 +35,12 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        IdleProbe.StartIfRequested(); // 【一時】アイドル CPU 調査用
+
+        // UI スレッドが 500ms 以上固まったら %APPDATA%\ColumnView\stalls.log に記録する。
+        // 「時折固まる」の原因を後から特定するため、常用ビルドでも有効にしておく。
+        StallWatch.Start();
+
         // 予期しない例外は %APPDATA%\ColumnView\error.log に記録する (フリーズ/クラッシュ調査用)。
         // UI スレッドの例外はログ後に握りつぶしてアプリごと落ちるのを防ぐ
         DispatcherUnhandledException += OnDispatcherUnhandledException;

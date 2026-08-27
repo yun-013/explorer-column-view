@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     public MainWindow(MainViewModel vm)
     {
         InitializeComponent();
+        IdleProbe.AttachWindow(this); // 【一時】アイドル CPU 調査用
         _vm = vm;
         DataContext = _vm;
         _vm.TabsEmptied += OnTabsEmptied;
