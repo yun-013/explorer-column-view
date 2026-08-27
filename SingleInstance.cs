@@ -16,6 +16,10 @@ internal static class SingleInstance
     /// ":" を含むこの形は実在パスと衝突しない。</summary>
     public const string HomeRequest = "::home";
 
+    /// <summary>「新しいウィンドウを開いて」の要求 (タスクバーのジャンプリスト)。
+    /// HomeRequest と違い、既存ウィンドウの新しいタブではなく別ウィンドウを開く。</summary>
+    public const string NewWindowRequest = "::new-window";
+
     // ユーザー名とセッション ID を含めて他ユーザー/他セッションと衝突させない
     private static string PipeName =>
         $"ColumnView.OpenFolder.{Environment.UserName}.{System.Diagnostics.Process.GetCurrentProcess().SessionId}";
@@ -55,7 +59,8 @@ internal static class SingleInstance
                     await server.WaitForConnectionAsync();
                     using var reader = new StreamReader(server, Encoding.UTF8);
                     var message = (await reader.ReadToEndAsync()).Trim();
-                    if (message == HomeRequest || (message.Length > 0 && Directory.Exists(message)))
+                    if (message is HomeRequest or NewWindowRequest
+                        || (message.Length > 0 && Directory.Exists(message)))
                         onFolder(message);
                 }
                 catch

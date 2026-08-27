@@ -1,12 +1,16 @@
 ﻿using System.IO;
 using System.Windows;
 using System.Windows.Media;
+using System.Windows.Shell;
 using System.Windows.Threading;
 
 namespace ColumnView;
 
 public partial class App : Application
 {
+    /// <summary>タスクバーのジャンプリスト「新しいウィンドウ」が渡してくる引数。</summary>
+    private const string NewWindowArg = "--new-window";
+
     // 単一インスタンス判定用。プロセス終了まで握りっぱなしにする (GC 回収防止のため保持)
     private static Mutex? _instanceMutex;
 
@@ -59,8 +63,13 @@ public partial class App : Application
 
         // ---- 単一インスタンス: 起動済みなら既存ウィンドウの新タブへ転送 ----
         // 引数なし (Win+E・exe 直接起動) はホームタブを開く要求として転送する
+        // --new-window (ジャンプリスト) は新しいタブではなく別ウィンドウを開かせる
+        var request = e.Args.Contains(NewWindowArg)
+            ? SingleInstance.NewWindowRequest
+            : initialFolder ?? SingleInstance.HomeRequest;
+
         _instanceMutex = new Mutex(true, SingleInstance.MutexName, out var isFirst);
-        if (!isFirst && SingleInstance.TrySendToExisting(initialFolder ?? SingleInstance.HomeRequest))
+        if (!isFirst && SingleInstance.TrySendToExisting(request))
         {
             Shutdown();
             return;
@@ -74,6 +83,8 @@ public partial class App : Application
         // 退避ごみ箱 (NAS 等) の保持期限切れを背景で掃除する。
         // 起動をブロックしない (オフラインの NAS は Directory.Exists が数秒待つことがある)
         _ = Task.Run(FileOps.PurgeAllTrashRoots);
+
+        ConfigureJumpList();
 
         new MainWindow(MainViewModel.CreateForStartup(initialFolder)).Show();
     }
@@ -122,6 +133,32 @@ public partial class App : Application
         }
     }
 
+    /// <summary>タスクバーのアイコンを右クリックしたときのメニュー (ジャンプリスト) を組み立てる。
+    /// 「新しいウィンドウ」は自分自身を --new-window 付きで起動し、
+    /// 起動済みなら単一インスタンス経由で既存プロセスに新しいウィンドウを開かせる。</summary>
+    private void ConfigureJumpList()
+    {
+        if (Environment.ProcessPath is not { } exe)
+            return;
+        try
+        {
+            var list = new JumpList { ShowRecentCategory = false, ShowFrequentCategory = false };
+            list.JumpItems.Add(new JumpTask
+            {
+                Title = "新しいウィンドウ",
+                Description = "Column View の新しいウィンドウを開きます",
+                ApplicationPath = exe,
+                Arguments = NewWindowArg,
+                IconResourcePath = exe,
+            });
+            JumpList.SetJumpList(this, list);   // 設定した時点でシェルへ反映される
+        }
+        catch
+        {
+            // ジャンプリストは無くても支障が無い (シェルが応答しない環境などで失敗しうる)
+        }
+    }
+
     /// <summary>別プロセスから転送された要求を、最後に使ったウィンドウの新タブで開く。
     /// message はフォルダーパスか、ホーム要求 (SingleInstance.HomeRequest)。</summary>
     private void OpenFolderInExistingWindow(string message)
@@ -132,6 +169,11 @@ public partial class App : Application
             var window = ColumnView.MainWindow.LastActivated is { IsLoaded: true } w
                 ? w
                 : Windows.OfType<ColumnView.MainWindow>().FirstOrDefault();
+            if (message == SingleInstance.NewWindowRequest)
+            {
+                ColumnView.MainWindow.OpenNewWindow(null, window);
+                return;
+            }
             if (window is not null)
                 _ = window.OpenFolderTabAsync(message == SingleInstance.HomeRequest ? null : message);
         });
