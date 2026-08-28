@@ -16,6 +16,26 @@ public class FavoriteGroup
     public List<string> ChildOrder { get; set; } = new();
 }
 
+/// <summary>セッション復元用に控える 1 列分の情報。</summary>
+public class SessionColumn
+{
+    /// <summary>フォルダ列のパス (ホーム列・グループ列では null)。</summary>
+    public string? Path { get; set; }
+
+    /// <summary>グループ列のグループ Id (フォルダ列・ホーム列では null)。</summary>
+    public string? GroupId { get; set; }
+
+    /// <summary>この列で選択されていた項目のキー
+    /// (フォルダ・ファイルはパス、グループ見出しは "group:"+Id)。</summary>
+    public string? Selected { get; set; }
+}
+
+/// <summary>セッション復元用に控える 1 タブ分の列構成 (左から順)。</summary>
+public class SessionTab
+{
+    public List<SessionColumn> Columns { get; set; } = new();
+}
+
 public class AppSettings
 {
     public SortKey SortKey { get; set; } = SortKey.Name;
@@ -56,7 +76,11 @@ public class AppSettings
     /// <summary>起動時に前回のタブ構成を復元するか。</summary>
     public bool RestoreSession { get; set; } = true;
 
-    /// <summary>最後に閉じたウィンドウの各タブのフォルダ (null = ホーム)。</summary>
+    /// <summary>最後に閉じたウィンドウの各タブの列構成 (左から順に全列)。</summary>
+    public List<SessionTab> SessionColumns { get; set; } = new();
+
+    /// <summary>最後に閉じたウィンドウの各タブのフォルダ (null = ホーム)。
+    /// SessionColumns 導入前の旧形式。読み込み時に 1 列のタブとして移行するためだけに残す。</summary>
     public List<string?> SessionTabs { get; set; } = new();
 
     /// <summary>前回アクティブだったタブの位置。</summary>
