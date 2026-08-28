@@ -261,6 +261,7 @@ public partial class App : Application
             Set("WindowBackgroundBrush", "#262421");
             Set("SurfaceBrush", "#37342F");
             Set("CaptionBarBrush", "#161412");
+            Set("CaptionBarMergeBrush", "#472D23");
             Set("BorderSoftBrush", "#575145");
             Set("WindowOuterBorderBrush", "#645D4E");
             Set("TextPrimaryBrush", "#F0EDE6");
@@ -297,6 +298,7 @@ public partial class App : Application
             Set("WindowBackgroundBrush", "#FCFAF7");
             Set("SurfaceBrush", "#FFFFFE");
             Set("CaptionBarBrush", "#F1ECE2");
+            Set("CaptionBarMergeBrush", "#E8CEBF");
             Set("BorderSoftBrush", "#ECE7DD");
             Set("WindowOuterBorderBrush", "#E3DCCF");
             Set("TextPrimaryBrush", "#2B2A27");

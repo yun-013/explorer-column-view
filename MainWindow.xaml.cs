@@ -638,10 +638,12 @@ public partial class MainWindow : Window
         floating.Topmost = false;
         floating.Opacity = 1.0;
 
+        // 結合するしないに関わらず強調は必ず解除する (解除漏れで色が残らないように)
+        _mergeTarget?.SetMergeHighlight(false);
+
         if (_mergeTarget is not null && _floatingTab is not null)
         {
             // 別ウィンドウのタブ列にドロップ → 結合 (運んできたタブを相手へ移し、自分は閉じる)
-            _mergeTarget.SetMergeHighlight(false);
             _mergeTarget.AcceptMergedTab(_floatingTab);
             floating.Close();
         }
@@ -661,6 +663,9 @@ public partial class MainWindow : Window
         StopDragWheelHook();
         if (new WindowInteropHelper(this).Handle is var hwnd && hwnd != 0)
             RemoveClipboardFormatListener(hwnd);
+        // ドラッグ中に閉じられた場合、結合先に強調が残ったままにならないよう戻す
+        _mergeTarget?.SetMergeHighlight(false);
+        _mergeTarget = null;
         CompositionTarget.Rendering -= DragTick;
         if (_dragWatchdog is not null)
         {
@@ -679,11 +684,13 @@ public partial class MainWindow : Window
         Activate();
     }
 
-    /// <summary>ドッキング先候補としてタブ列を強調する。</summary>
+    /// <summary>ドッキング先候補としてタブ列を強調する。
+    /// XAML の Background は DynamicResource (= ローカル値) なので、固定色を代入すると
+    /// 解除後も元のブラシに戻らずテーマ切り替えも効かなくなる。必ずリソース参照を貼り直す。</summary>
     public void SetMergeHighlight(bool on)
-        => CaptionBar.Background = on
-            ? new SolidColorBrush(Color.FromRgb(0xBF, 0xD9, 0xF2))
-            : new SolidColorBrush(Color.FromRgb(0xDD, 0xE1, 0xE6));
+        => CaptionBar.SetResourceReference(
+            Panel.BackgroundProperty,
+            on ? "CaptionBarMergeBrush" : "CaptionBarBrush");
 
     // ---- 並べ替え・お気に入り ----
 

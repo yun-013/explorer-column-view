@@ -24,6 +24,8 @@
         <SolidColorBrush x:Key="WindowBackgroundBrush" Color="#FCFAF7"/>
         <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFE"/>
         <SolidColorBrush x:Key="CaptionBarBrush" Color="#F1ECE2"/>
+        <!-- タブをドラッグしてこのウィンドウに結合できる状態を示すタブ列の色 -->
+        <SolidColorBrush x:Key="CaptionBarMergeBrush" Color="#E8CEBF"/>
         <SolidColorBrush x:Key="BorderSoftBrush" Color="#ECE7DD"/>
         <SolidColorBrush x:Key="WindowOuterBorderBrush" Color="#E3DCCF"/>
 
