@@ -19,6 +19,8 @@ public class MainViewModel : ObservableObject
         {
             if (Set(ref _activeTab, value))
             {
+                if (value?.Pending is not null)
+                    _ = MaterializeAsync(value);
                 UpdateCurrentPathFromTab();
                 RaiseNavState();
             }
@@ -239,7 +241,7 @@ public class MainViewModel : ObservableObject
 
     private void ResortAll()
     {
-        _navigating = true;
+        _navigatingDepth++;
         try
         {
             var comparison = CurrentComparison;
@@ -249,7 +251,7 @@ public class MainViewModel : ObservableObject
         }
         finally
         {
-            _navigating = false;
+            _navigatingDepth--;
         }
         StatusText = $"並べ替え: {SortKeyLabel(_settings.SortKey)} ({(_settings.SortDescending ? "降順" : "昇順")})";
     }
@@ -494,7 +496,7 @@ public class MainViewModel : ObservableObject
     /// <summary>ホーム列・グループ列 (どちらも Path==null) を再読み込みする (選択は保持)。</summary>
     private async Task RefreshGroupColumnsAsync()
     {
-        _navigating = true;
+        _navigatingDepth++;
         try
         {
             foreach (var tab in Tabs)
@@ -511,7 +513,7 @@ public class MainViewModel : ObservableObject
         }
         finally
         {
-            _navigating = false;
+            _navigatingDepth--;
         }
     }
 
@@ -678,7 +680,11 @@ public class MainViewModel : ObservableObject
 
     // ---- タブ・ナビゲーション ----
 
-    private bool _navigating;
+    /// <summary>ナビゲーション中 (列の作り直し・選択の復帰) の入れ子カウント。
+    /// 0 でない間は列の選択変更をユーザー操作として扱わない。</summary>
+    private int _navigatingDepth;
+
+    private bool Navigating => _navigatingDepth > 0;
 
     /// <summary>タブが 0 個になったとき (最後のタブを閉じた / 引き剝がした) に発火。</summary>
     public event Action? TabsEmptied;
@@ -704,20 +710,24 @@ public class MainViewModel : ObservableObject
     /// extraFolder があればそれを最後に開いてアクティブにする (引数起動)。</summary>
     private async Task InitTabsAsync(string? extraFolder = null)
     {
-        if (_settings.RestoreSession && _settings.SessionTabs.Count > 0)
+        if (_settings.RestoreSession && LoadSession() is { Count: > 0 } session)
         {
-            foreach (var path in _settings.SessionTabs)
+            // 列構成の組み立て (フォルダの存在確認を含む) はまとめて別スレッドで行い、
+            // ネットワークパスの応答待ちで UI を止めない。ホーム列の顔ぶれは
+            // 道筋を足すタブがあるときだけ、全タブ分まとめて 1 回作る。
+            var plans = await Task.Run(() =>
             {
-                if (path is null)
-                    await NewTabAsync(null);
-                else if (Directory.Exists(path))
-                    await NewTabAsync(path);
-            }
+                var anchors = session.Any(t => t.Columns.FirstOrDefault() is { GroupId: null, Path: not null })
+                    ? RouteAnchors()
+                    : new List<string>();
+                return session.Select(t => PlanRestore(t.Columns, anchors)).ToList();
+            });
+            foreach (var plan in plans)
+                RestoreTab(plan);
             if (Tabs.Count > 0)
             {
                 var active = _settings.SessionActiveTab;
-                if (active >= 0 && active < Tabs.Count)
-                    ActiveTab = Tabs[active];
+                ActiveTab = Tabs[active >= 0 && active < Tabs.Count ? active : 0];
                 // 引数フォルダーは復元タブの後ろに追加して前面に出す
                 // (復元をやめて単独で開くと、閉じたとき SaveSession が元のセッションを潰すため)
                 if (extraFolder is not null)
@@ -728,14 +738,270 @@ public class MainViewModel : ObservableObject
         await NewTabAsync(extraFolder);
     }
 
-    /// <summary>現在のタブ構成 (各タブの最深フォルダ) を設定へ保存する。最後のウィンドウを閉じるときに呼ぶ。</summary>
+    /// <summary>保存済みセッションを取り出す。旧形式 (最深フォルダだけの SessionTabs) は
+    /// 1 列のタブとして読み、復元時にホームからの道筋を足してもらう。</summary>
+    private List<SessionTab> LoadSession()
+    {
+        if (_settings.SessionColumns.Count > 0)
+            return _settings.SessionColumns;
+        return _settings.SessionTabs
+            .Select(p => new SessionTab { Columns = { new SessionColumn { Path = p } } })
+            .ToList();
+    }
+
+    /// <summary>現在のタブ構成 (各タブの全列と選択) を設定へ保存する。最後のウィンドウを閉じるときに呼ぶ。</summary>
     public void SaveSession()
     {
-        _settings.SessionTabs = Tabs
-            .Select(t => t.Columns.LastOrDefault(c => c.Path is not null)?.Path)
-            .ToList();
+        _settings.SessionColumns = Tabs.Select(CaptureTab).ToList();
+        _settings.SessionTabs.Clear(); // 旧形式は移行済み (残すと次回どちらを読むか曖昧になる)
         _settings.SessionActiveTab = ActiveTab is null ? 0 : Tabs.IndexOf(ActiveTab);
         _settings.Save();
+    }
+
+    /// <summary>タブの列構成を控える。検索列は結果を再現できないので、そこで打ち切る。</summary>
+    private static SessionTab CaptureTab(TabModel tab)
+    {
+        if (tab.Pending is { } pending)
+            return new SessionTab { Columns = pending }; // 一度も開かなかったタブは控えを持ち越す
+
+        var state = new SessionTab();
+        foreach (var column in tab.Columns)
+        {
+            if (column.IsSearch)
+                break;
+            state.Columns.Add(new SessionColumn
+            {
+                Path = column.Path,
+                GroupId = column.GroupId,
+                Selected = column.SelectedItem?.Path,
+            });
+        }
+        return state;
+    }
+
+    /// <summary>控えた列構成をタブ 1 枚として並べる (開ける列が 1 つも無ければ何もしない)。
+    /// 列の読み込みは初めてアクティブになるまで先送りするので、タブが何枚あっても
+    /// 起動時に実際に読むのは 1 タブ分だけで済む。</summary>
+    private void RestoreTab(List<SessionColumn> plan)
+    {
+        if (plan.Count == 0)
+            return;
+        var last = plan[^1];
+        Tabs.Add(new TabModel
+        {
+            Pending = plan,
+            Title = TrimTitle(ColumnTitle(last.Path, last.GroupId)),
+            History = { plan[0].Path },
+            HistoryIndex = 0,
+        });
+    }
+
+    /// <summary>復元待ちのタブを実際の列へ展開する (初めてアクティブになったとき)。</summary>
+    private async Task MaterializeAsync(TabModel tab)
+    {
+        if (tab.Pending is not { } plan)
+            return;
+        tab.Pending = null; // 再入防止 (最初の await より前に落とす)
+        _navigatingDepth++;
+        try
+        {
+            foreach (var desc in plan)
+            {
+                // 控えてから開くまでの間に消えたグループ / フォルダがあれば、そこで打ち切る
+                ColumnModel column;
+                if (desc.GroupId is { } gid)
+                {
+                    if (_settings.FindGroup(gid) is not { } group)
+                        break;
+                    column = new ColumnModel(group);
+                }
+                else
+                {
+                    if (desc.Path is { } path && !Directory.Exists(path))
+                        break;
+                    column = new ColumnModel(desc.Path);
+                }
+                tab.Columns.Add(column);
+                await column.LoadAsync(ShowHidden, CurrentComparison);
+                // 選択の復帰はナビゲーション中なので、右の列を開き直す動きにはならない
+                if (desc.Selected is { } key)
+                    column.SelectedItem = column.Items.FirstOrDefault(
+                        i => string.Equals(i.Path, key, StringComparison.OrdinalIgnoreCase));
+            }
+            if (tab.Columns.Count == 0)
+            {
+                var home = new ColumnModel((string?)null); // 全部消えていた: ホーム列で開く
+                tab.Columns.Add(home);
+                await home.LoadAsync(ShowHidden, CurrentComparison);
+            }
+            var opened = tab.Columns[^1];
+            tab.Title = TrimTitle(ColumnTitle(opened.Path, opened.GroupId));
+            if (ActiveTab == tab)
+            {
+                UpdateCurrentPathFromTab();
+                UpdateStatus(opened);
+                RaiseNavState();
+            }
+        }
+        finally
+        {
+            _navigatingDepth--;
+        }
+    }
+
+    /// <summary>列の見出し (ホーム列 / グループ列 / フォルダ列)。</summary>
+    private string ColumnTitle(string? path, string? groupId)
+    {
+        if (groupId is { } gid)
+            return _settings.FindGroup(gid)?.Name ?? "グループ";
+        if (path is null)
+            return "ホーム";
+        return Path.GetFileName(path.TrimEnd('\\')) is { Length: > 0 } name ? name : path;
+    }
+
+    // ---- セッション復元: 控えた列構成を「実際に開ける列の並び」へ組み直す ----
+
+    /// <summary>控えた列構成を復元用に整える。
+    /// (1) 消えたフォルダ・グループがあればそこで打ち切る (先頭が消えていればタブごと捨てる)、
+    /// (2) フォルダ列から始まるタブ (お気に入り・グループ・引数から直接開いたタブ) には
+    ///     ホームからそこまでの道筋を前に足して、対象フォルダを最右の列にする、
+    /// (3) 選択が控えられていない列は、その右隣を開いた項目で補う (旧形式からの移行用)。</summary>
+    private List<SessionColumn> PlanRestore(List<SessionColumn> saved, List<string> anchors)
+    {
+        var plan = new List<SessionColumn>();
+        foreach (var desc in saved)
+        {
+            if (desc.GroupId is { } gid && _settings.FindGroup(gid) is null)
+                break; // 消えたグループ: ここから右は再現できない
+            if (desc is { GroupId: null, Path: { } path } && !Directory.Exists(path))
+                break;
+            plan.Add(new SessionColumn { Path = desc.Path, GroupId = desc.GroupId, Selected = desc.Selected });
+        }
+        if (plan.Count == 0)
+            return plan;
+
+        if (plan[0] is { GroupId: null, Path: { } root })
+        {
+            var route = HomeRouteTo(root, anchors);
+            route[^1].Selected = plan[0].Selected;
+            plan.RemoveAt(0);
+            plan.InsertRange(0, route);
+        }
+
+        for (var i = 0; i < plan.Count - 1; i++)
+            plan[i].Selected ??= KeyOf(plan[i + 1]);
+        return plan;
+
+        static string? KeyOf(SessionColumn column)
+            => column.GroupId is { } gid ? "group:" + gid : column.Path;
+    }
+
+    /// <summary>ホームからの道筋の起点候補 (お気に入り・既知フォルダ・クラウドルート)。
+    /// ホーム列に並ぶ顔ぶれと揃えているが、ドライブは Path.GetPathRoot で代用できるので省く
+    /// (DriveInfo の列挙はネットワークドライブがあると遅い)。存在確認もしない —
+    /// 起点は復元対象フォルダの先祖なので、対象さえ在れば必ず在る。</summary>
+    private List<string> RouteAnchors()
+    {
+        var anchors = new List<string>(_settings.Favorites);
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        anchors.Add(Environment.GetFolderPath(Environment.SpecialFolder.Desktop));
+        anchors.Add(System.IO.Path.Combine(profile, "Downloads"));
+        anchors.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+        anchors.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures));
+        anchors.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
+        anchors.Add(Environment.GetFolderPath(Environment.SpecialFolder.MyMusic));
+        anchors.Add(profile);
+        foreach (var cloud in CloudSync.Roots)
+            anchors.Add(cloud.Path);
+        foreach (var name in new[] { "OneDrive", "OneDriveConsumer", "OneDriveCommercial" })
+            anchors.Add(Environment.GetEnvironmentVariable(name) ?? "");
+        return anchors.Where(a => !string.IsNullOrEmpty(a)).ToList();
+    }
+
+    /// <summary>ホームから path までの列構成を作る (末尾が path 自身の列)。
+    /// ホーム列に並ぶフォルダやグループのメンバーのうち path の最も深い先祖 (自身を含む) を
+    /// 起点にするので、ダウンロードなら「ホーム → ダウンロード」の 2 列で済む。</summary>
+    private List<SessionColumn> HomeRouteTo(string path, List<string> anchors)
+    {
+        var route = new List<SessionColumn> { new() }; // ホーム列
+
+        var anchor = anchors
+            .Where(entry => IsAncestorOrSelf(entry, path))
+            .OrderByDescending(entry => entry.TrimEnd('\\').Length)
+            .FirstOrDefault();
+
+        // グループのメンバーにもっと深い起点があればそちらを使う (ホーム → グループ → フォルダ)
+        if (FindGroupAnchor(path, anchor?.TrimEnd('\\').Length ?? 0) is { } via)
+        {
+            foreach (var group in via.Groups)
+                route.Add(new SessionColumn { GroupId = group.Id });
+            anchor = via.Path;
+        }
+
+        // ホームから辿れないパス (UNC など) はドライブ / 共有のルートから 1 階層ずつ並べる
+        anchor ??= Path.GetPathRoot(path);
+        if (string.IsNullOrEmpty(anchor))
+            return new List<SessionColumn> { new() { Path = path } };
+
+        route.Add(new SessionColumn { Path = anchor });
+        foreach (var step in Descend(anchor, path))
+            route.Add(new SessionColumn { Path = step });
+        return route;
+    }
+
+    /// <summary>グループのメンバーから path の先祖 (自身を含む) で最も深いものを探し、
+    /// そこへ至るグループの入れ子と一緒に返す。minDepth 以下の浅い候補は無視する。
+    /// RouteAnchors と同じ理由で存在確認はしない。</summary>
+    private (List<FavoriteGroup> Groups, string Path)? FindGroupAnchor(string path, int minDepth)
+    {
+        (List<FavoriteGroup>, string)? best = null;
+        var trail = new List<FavoriteGroup>();
+        Walk(_settings.Groups);
+        return best;
+
+        void Walk(List<FavoriteGroup> list)
+        {
+            foreach (var group in list)
+            {
+                trail.Add(group);
+                foreach (var member in group.Paths)
+                {
+                    var depth = member.TrimEnd('\\').Length;
+                    if (depth > minDepth && IsAncestorOrSelf(member, path))
+                    {
+                        minDepth = depth;
+                        best = (new List<FavoriteGroup>(trail), member);
+                    }
+                }
+                Walk(group.Subgroups);
+                trail.RemoveAt(trail.Count - 1);
+            }
+        }
+    }
+
+    /// <summary>anchor の 1 つ下から path までのフォルダを順に返す (anchor 自身は含まない)。</summary>
+    private static List<string> Descend(string anchor, string path)
+    {
+        var steps = new List<string>();
+        var end = anchor.TrimEnd('\\');
+        for (var dir = path; dir is not null; dir = Path.GetDirectoryName(dir))
+        {
+            if (string.Equals(dir.TrimEnd('\\'), end, StringComparison.OrdinalIgnoreCase))
+                break;
+            steps.Add(dir);
+        }
+        steps.Reverse();
+        return steps;
+    }
+
+    /// <summary>ancestor が path と同じか、その先祖フォルダか。</summary>
+    private static bool IsAncestorOrSelf(string ancestor, string path)
+    {
+        var a = ancestor.TrimEnd('\\');
+        var p = path.TrimEnd('\\');
+        if (a.Length > p.Length || !p.StartsWith(a, StringComparison.OrdinalIgnoreCase))
+            return false;
+        return p.Length == a.Length || p[a.Length] == '\\';
     }
 
     public Task NewTabAsync(string? path) => NewTabAsync(path, Tabs.Count);
@@ -770,11 +1036,13 @@ public class MainViewModel : ObservableObject
     private const int ClosedTabLimit = 10;
 
     /// <summary>閉じたタブを「最深フォルダ + タブ列での位置」に畳んで控える。
-    /// 列の重なりまでは覚えない (SaveSession と同じ粒度。開き直したフォルダから
-    /// 改めて潜れれば足りるうえ、検索列やグループ列は元から再現できないため)。</summary>
+    /// 列の重なりまでは覚えない (セッション復元と違い、開き直したフォルダから
+    /// 改めて潜れれば足りるため)。</summary>
     private void RememberClosedTab(TabModel tab, int index)
     {
-        _closedTabs.Add((tab.Columns.LastOrDefault(c => c.Path is not null)?.Path, index));
+        var deepest = tab.Columns.LastOrDefault(c => c.Path is not null)?.Path
+            ?? tab.Pending?.LastOrDefault(c => c.Path is not null)?.Path;
+        _closedTabs.Add((deepest, index));
         if (_closedTabs.Count > ClosedTabLimit)
             _closedTabs.RemoveAt(0);
     }
@@ -816,7 +1084,7 @@ public class MainViewModel : ObservableObject
     /// <summary>タブの中身を指定パス起点で作り直す (パスバーから移動 / 隠しファイル切替)</summary>
     public async Task ResetTabAsync(TabModel tab, string? path)
     {
-        _navigating = true;
+        _navigatingDepth++;
         try
         {
             TrimColumns(tab, 0);
@@ -829,7 +1097,7 @@ public class MainViewModel : ObservableObject
         }
         finally
         {
-            _navigating = false;
+            _navigatingDepth--;
         }
     }
 
@@ -848,7 +1116,7 @@ public class MainViewModel : ObservableObject
     /// <summary>全タブの全列をその場で再読込する (隠しファイル切替など)。開いている階層と選択は維持。</summary>
     private async Task ReloadAllColumnsAsync()
     {
-        _navigating = true;
+        _navigatingDepth++;
         try
         {
             foreach (var tab in Tabs)
@@ -865,7 +1133,7 @@ public class MainViewModel : ObservableObject
         }
         finally
         {
-            _navigating = false;
+            _navigatingDepth--;
         }
     }
 
@@ -873,7 +1141,7 @@ public class MainViewModel : ObservableObject
     public async Task OnItemSelectedAsync(ColumnModel column, FileSystemItem item)
     {
         // IsRefreshing: 外部変更の再読み込みによる選択復帰はナビゲーションとして扱わない
-        if (_navigating || column.IsRefreshing || ActiveTab is null)
+        if (Navigating || column.IsRefreshing || ActiveTab is null)
             return;
 
         var tab = ActiveTab;
@@ -928,7 +1196,7 @@ public class MainViewModel : ObservableObject
     /// <summary>複数選択時: 子の列を畳んで件数を表示する。</summary>
     public void OnMultiSelect(ColumnModel column, int count)
     {
-        if (_navigating || column.IsRefreshing || ActiveTab is not { } tab)
+        if (Navigating || column.IsRefreshing || ActiveTab is not { } tab)
             return;
         var index = tab.Columns.IndexOf(column);
         if (index < 0)
@@ -1208,7 +1476,7 @@ public class MainViewModel : ObservableObject
     public async Task RefreshColumnsAsync(IEnumerable<string> dirs)
     {
         var set = new HashSet<string>(dirs, StringComparer.OrdinalIgnoreCase);
-        _navigating = true;
+        _navigatingDepth++;
         try
         {
             foreach (var tab in Tabs)
@@ -1227,7 +1495,7 @@ public class MainViewModel : ObservableObject
         }
         finally
         {
-            _navigating = false;
+            _navigatingDepth--;
         }
     }
 

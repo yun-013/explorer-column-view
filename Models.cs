@@ -897,6 +897,11 @@ public class TabModel : ObservableObject
 
     public ObservableCollection<ColumnModel> Columns { get; } = new();
 
+    /// <summary>まだ列を作っていない復元待ちの列構成 (前回のセッション)。
+    /// 起動を軽くするため、非アクティブなタブは控えたまま読み込まず、
+    /// 初めてアクティブになったときに MainViewModel が列へ展開する。</summary>
+    public List<SessionColumn>? Pending { get; set; }
+
     public TabModel()
     {
         // 列の増減のたびに最終列を割り当て直す (最終列だけ幅の自動調整が働く)
