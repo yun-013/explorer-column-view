@@ -693,6 +693,9 @@ public class MainViewModel : ObservableObject
 
     public MainViewModel(bool createInitialTab)
     {
+        // パンくずは CurrentPath が変わったときだけ作り直すので、初期値 (ホーム) の分をここで一度作る。
+        // これが無いと、復元後の最初のタブがホームのままだとアドレスバーが空のままになる。
+        BuildBreadcrumbs();
         if (createInitialTab)
             _ = InitTabsAsync();
     }
