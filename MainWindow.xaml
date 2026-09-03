@@ -220,11 +220,15 @@
                             <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding TypeName}" Style="{StaticResource Value}"
                                        Visibility="{Binding TypeRowVisibility}"/>
 
-                            <TextBlock Grid.Row="3" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"/>
-                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"
+                                       Visibility="{Binding StatRowVisibility}"/>
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"
+                                       Visibility="{Binding StatRowVisibility}"/>
 
-                            <TextBlock Grid.Row="4" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"/>
-                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"/>
+                            <TextBlock Grid.Row="4" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"
+                                       Visibility="{Binding StatRowVisibility}"/>
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"
+                                       Visibility="{Binding StatRowVisibility}"/>
 
                             <!-- 寸法 (画像) / 長さ (動画・音声): ホバー時に取得 -->
                             <TextBlock Grid.Row="5" Grid.Column="0" Text="{Binding MetaLabel}" Style="{StaticResource Label}"

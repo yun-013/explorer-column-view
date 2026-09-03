@@ -94,6 +94,20 @@ public class FileSystemItem : ObservableObject
     /// <summary>ホーム列のお気に入り項目 (★バッジ表示)</summary>
     public bool IsFavoriteEntry { get; init; }
 
+    /// <summary>ホーム列のポータブルデバイス行 (iPhone・Android 等の MTP/PTP 機器)。
+    /// Path はシェル解析名でファイルシステム上の実パスではないため、列に展開できず
+    /// ファイル操作・監視・サイズ集計の対象外。開くときはエクスプローラーに任せる。</summary>
+    public bool IsShellDevice { get; init; }
+
+    /// <summary>ホーム列の切断中ネットワークドライブ行 (記憶されたマッピングはあるが未接続)。
+    /// 開く前に繋ぎ直しが要る。</summary>
+    public bool IsDisconnectedDrive { get; init; }
+
+    /// <summary>アイコンをホーム列の生成時 (バックグラウンド) に確定済みの項目。
+    /// UI スレッドからシェルに問い合わせない — 切断中のネットワークドライブや
+    /// 応答の遅いシェル拡張で描画が止まるのを避ける。</summary>
+    public bool IconPreloaded { get; init; }
+
     /// <summary>検索結果でのみ表示する、検索起点から見た親フォルダの相対パス。</summary>
     public string? Location { get; init; }
     public Visibility LocationVisibility => Location is null ? Visibility.Collapsed : Visibility.Visible;
@@ -118,9 +132,13 @@ public class FileSystemItem : ObservableObject
     private ImageSource? _resolvedIcon;
     public ImageSource? Icon => _resolvedIcon ?? GenericIcon;
 
-    private ImageSource? GenericIcon => UseRealIcon
-        ? IconCache.GetByPath(Path)
-        : IconCache.GetByExtension(IsDirectory ? null : System.IO.Path.GetExtension(Name), IsDirectory);
+    // 読み込み済みの行 (IconPreloaded) はここに来た時点で実アイコンの取得に失敗している。
+    // 取り直しても遅いだけなので、汎用アイコンで済ませる。
+    private ImageSource? GenericIcon => IconPreloaded
+        ? IconCache.GetByExtension(null, isDirectory: true)
+        : UseRealIcon
+            ? IconCache.GetByPath(Path)
+            : IconCache.GetByExtension(IsDirectory ? null : System.IO.Path.GetExtension(Name), IsDirectory);
 
     /// <summary>実ファイルのアイコン (.exe の埋め込みアイコン等) を後から差し替える。</summary>
     public void ApplyRealIcon(ImageSource icon)
@@ -221,12 +239,21 @@ public class FileSystemItem : ObservableObject
     // ---- ホバー時のツールチップ情報 ----
 
     /// <summary>「種類」(ファイルのみ表示)。フォルダは行ごと非表示。</summary>
-    public string TypeName => IsDirectory
-        ? "ファイル フォルダ"
-        : IconCache.GetTypeName(System.IO.Path.GetExtension(Name));
+    public string TypeName => IsShellDevice
+        ? "ポータブル デバイス"
+        : IsDisconnectedDrive
+            ? "ネットワーク ドライブ (切断中)"
+            : IsDirectory
+                ? "ファイル フォルダ"
+                : IconCache.GetTypeName(System.IO.Path.GetExtension(Name));
 
-    /// <summary>種類の行はファイルのときだけ見せる。</summary>
-    public Visibility TypeRowVisibility => IsDirectory ? Visibility.Collapsed : Visibility.Visible;
+    /// <summary>種類の行はファイルのときだけ見せる (デバイス・切断中ドライブは状態を見せる)。</summary>
+    public Visibility TypeRowVisibility => IsDirectory && !IsDisconnectedDrive
+        ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>サイズ / 更新日時の行。デバイスや切断中のドライブには当てはまらないので畳む。</summary>
+    public Visibility StatRowVisibility => IsShellDevice || IsDisconnectedDrive
+        ? Visibility.Collapsed : Visibility.Visible;
 
     public string ModifiedText => Modified.ToString("yyyy/MM/dd HH:mm");
 
@@ -292,7 +319,8 @@ public class FileSystemItem : ObservableObject
     /// <summary>フォルダの合計サイズをバックグラウンドで集計する (ホバー時に一度だけ)。</summary>
     public async Task EnsureFolderSizeAsync(CancellationToken ct)
     {
-        if (!IsDirectory || _folderSizeComputed)
+        // 切断中のドライブは走査しても無駄 (繋ぎ直しの待ちを踏むだけ)
+        if (!IsDirectory || IsDisconnectedDrive || _folderSizeComputed)
             return;
         _folderSizeComputed = true;
         try
@@ -880,6 +908,38 @@ public class ColumnModel : ObservableObject, IDisposable
                 DriveCapacityText = drive.TotalSize > 0
                     ? $"空き {FileSystemItem.FormatSize(drive.TotalFreeSpace)} / {FileSystemItem.FormatSize(drive.TotalSize)}" : null,
             });
+        }
+
+        // DriveInfo では見えない「PC」直下の項目 — ドライブ文字を持たない接続機器
+        // (iPhone・Android・カメラ等の MTP/PTP) と、切断中のネットワークドライブ。
+        // エクスプローラーと同じくドライブの後ろに並べる。
+        foreach (var entry in ComputerFolder.EnumerateMissing())
+        {
+            if (!addedPaths.Add(entry.Path.TrimEnd('\\')))
+                continue;
+            var item = new FileSystemItem
+            {
+                Path = entry.Path,
+                Name = entry.Name,
+                // 切断中のネットワークドライブは実パスなので、繋ぎ直しさえすれば
+                // 通常のフォルダとして列に展開できる (MainViewModel が接続を挟む)。
+                IsDirectory = !entry.IsPortableDevice,
+                UseRealIcon = true,
+                IconPreloaded = true,
+                IsShellDevice = entry.IsPortableDevice,
+                IsDisconnectedDrive = !entry.IsPortableDevice,
+                DriveUsedRatio = entry.Capacity > 0
+                    ? 1.0 - (double)entry.FreeSpace / entry.Capacity : null,
+                DriveCapacityText = entry.Capacity > 0
+                    ? $"空き {FileSystemItem.FormatSize(entry.FreeSpace)} / {FileSystemItem.FormatSize(entry.Capacity)}" : null,
+            };
+            // 実アイコン (iPhone の絵・切断ドライブの × 印など) をここ (バックグラウンド)
+            // で確定させる。UI スレッドからシェルや切断中の共有に問い合わせないため。
+            // SHGetFileInfo がシェル解析名を扱えない場合は IShellItemImageFactory で拾う。
+            if ((IconCache.GetByPath(entry.Path)
+                ?? ShellThumbnail.Get(entry.Path, 32, 0, allowDownload: true)) is { } icon)
+                item.ApplyRealIcon(icon);
+            items.Add(item);
         }
 
         return items;
