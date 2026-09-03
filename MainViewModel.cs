@@ -493,6 +493,22 @@ public class MainViewModel : ObservableObject
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+    /// <summary>ドライブ・機器の抜き差しでホーム列の顔ぶれを取り直す
+    /// (MainWindow が WM_DEVICECHANGE を受けて呼ぶ)。</summary>
+    public Task RefreshHomeColumnsAsync() => RefreshGroupColumnsAsync();
+
+    /// <summary>記憶されたネットワークドライブ (NAS 等) を裏で繋ぎ直し、
+    /// 繋がったらホーム列を並べ直す。起動時とネットワーク復帰時に呼ぶ。
+    /// ホーム列の表示は待たせない — 先に「切断中」の行として出しておき、
+    /// 繋がってから普通のドライブ (容量ゲージ付き) に差し替える。</summary>
+    public async Task ReconnectNetworkDrivesAsync()
+    {
+        if (!await Task.Run(ComputerFolder.ReconnectRememberedDrives))
+            return;
+        StatusText = "ネットワークドライブに接続しました";
+        await RefreshHomeColumnsAsync();
+    }
+
     /// <summary>ホーム列・グループ列 (どちらも Path==null) を再読み込みする (選択は保持)。</summary>
     private async Task RefreshGroupColumnsAsync()
     {
@@ -713,6 +729,10 @@ public class MainViewModel : ObservableObject
     /// extraFolder があればそれを最後に開いてアクティブにする (引数起動)。</summary>
     private async Task InitTabsAsync(string? extraFolder = null)
     {
+        // NAS 等は Windows のログオン時再接続に失敗して「切断中」で残ることがある。
+        // 起動のたびに裏で繋ぎ直しておく (タブの復元は待たせない)。
+        _ = ReconnectNetworkDrivesAsync();
+
         if (_settings.RestoreSession && LoadSession() is { Count: > 0 } session)
         {
             // 列構成の組み立て (フォルダの存在確認を含む) はまとめて別スレッドで行い、
@@ -1169,6 +1189,23 @@ public class MainViewModel : ObservableObject
             return;
         }
 
+        // ポータブルデバイス (iPhone 等): 実パスが無いので列には展開できない。
+        // CurrentPath は据え置きにして、開く操作はエクスプローラーに任せる。
+        if (item.IsShellDevice)
+        {
+            StatusText = $"{item.Name} — ポータブル デバイス (Enter / ダブルクリックでエクスプローラーで開く)";
+            return;
+        }
+
+        // 切断中のネットワークドライブ: ドライブ文字が存在しないので、そのまま列挙しても
+        // 「見つかりません」になるだけ。接続には数秒〜十数秒かかるので、↑↓ で行を通り過ぎる
+        // たびに待たされないよう、明示操作 (Enter / ダブルクリック) のときだけ繋ぎ直す。
+        if (item.IsDisconnectedDrive && !Directory.Exists(item.Path))
+        {
+            StatusText = $"{item.Name} — 切断中 (Enter / ダブルクリックで接続)";
+            return;
+        }
+
         CurrentPath = item.Path;
 
         if (item.IsDirectory)
@@ -1214,6 +1251,19 @@ public class MainViewModel : ObservableObject
             return;
         try
         {
+            // デバイスはシェル解析名 ("::{...}") なので ShellExecute では開けない
+            if (item.IsShellDevice)
+            {
+                if (!ComputerFolder.OpenInExplorer(item.Path))
+                    StatusText = $"{item.Name} を開けませんでした (機器がロックされている可能性があります)";
+                return;
+            }
+            // 切断中のネットワークドライブは、繋ぎ直してから開く
+            if (item.IsDisconnectedDrive && !Directory.Exists(item.Path))
+            {
+                _ = ConnectDriveAsync(item);
+                return;
+            }
             Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
         }
         catch (Exception ex)
@@ -1222,10 +1272,33 @@ public class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>切断中のネットワークドライブに繋ぎ直し、成功したらそのまま開く。
+    /// 資格情報が必要なら Windows 自身のダイアログが出る (パスワードはアプリでは扱わない)。</summary>
+    private async Task ConnectDriveAsync(FileSystemItem item)
+    {
+        StatusText = $"{item.Name} に接続しています…";
+        var error = await Task.Run(() => ComputerFolder.ReconnectDrive(item.Path, interactive: true));
+        if (error is not null)
+        {
+            StatusText = $"{item.Name} に接続できませんでした: {error}";
+            return;
+        }
+        StatusText = $"{item.Name} に接続しました";
+        // 繋がったのでホーム列では普通のドライブ (容量ゲージ付き) として並び直す
+        await RefreshHomeColumnsAsync();
+        await NavigateToPathAsync(item.Path);
+    }
+
     public void RevealInExplorer(FileSystemItem? item)
     {
         if (item is null)
             return;
+        // デバイスには親フォルダで選択して見せる相手がいないので、そのまま開く
+        if (item.IsShellDevice)
+        {
+            ComputerFolder.OpenInExplorer(item.Path);
+            return;
+        }
         Process.Start("explorer.exe", $"/select,\"{item.Path}\"");
     }
 

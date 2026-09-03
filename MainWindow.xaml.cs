@@ -224,6 +224,37 @@ public partial class MainWindow : Window
     private const int WM_MOUSEHWHEEL = 0x020E;
     private const int WM_SETTINGCHANGE = 0x001A;
 
+    // ---- ドライブ / 機器の抜き差し (ホーム列の顔ぶれを取り直す) ----
+
+    private const int WM_DEVICECHANGE = 0x0219;
+    private const int DBT_DEVICEARRIVAL = 0x8000;
+    private const int DBT_DEVICEREMOVECOMPLETE = 0x8004;
+    private const int DBT_DEVTYP_DEVICEINTERFACE = 5;
+    private const int DEVICE_NOTIFY_WINDOW_HANDLE = 0;
+
+    /// <summary>GUID_DEVINTERFACE_WPD。ドライブ (ボリューム) の抜き差しは登録なしで通知が来るが、
+    /// iPhone・Android のような MTP 機器はこのインターフェイスを購読しないと届かない。</summary>
+    private static readonly Guid DeviceInterfaceWpd = new("6AC27878-A6FA-4155-BA85-F98F491D4F33");
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct DEV_BROADCAST_DEVICEINTERFACE
+    {
+        public int dbcc_size;
+        public int dbcc_devicetype;
+        public int dbcc_reserved;
+        public Guid dbcc_classguid;
+        public short dbcc_name;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern nint RegisterDeviceNotification(nint hRecipient, nint notificationFilter, int flags);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool UnregisterDeviceNotification(nint handle);
+
+    private nint _deviceNotify;
+    private System.Windows.Threading.DispatcherTimer? _deviceTimer;
+
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern short GetKeyState(int nVirtKey);
 
@@ -242,6 +273,9 @@ public partial class MainWindow : Window
         base.OnSourceInitialized(e);
         var hwnd = new WindowInteropHelper(this).Handle;
         AddClipboardFormatListener(hwnd);
+        RegisterPortableDeviceNotification(hwnd);
+        // ネットワーク復帰 (Wi-Fi 再接続・ケーブル挿し直し等) で NAS を繋ぎ直す
+        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
         HwndSource.FromHwnd(hwnd)?.AddHook(ClipboardWndProc);
 
         // Win11 の DWM にウィンドウ自体を角丸にしてもらう
@@ -257,8 +291,68 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>MTP 機器 (iPhone・Android 等) の抜き差し通知を購読する。
+    /// 失敗してもドライブの抜き差しは拾えるので、そのまま続行する。</summary>
+    private void RegisterPortableDeviceNotification(nint hwnd)
+    {
+        var filter = new DEV_BROADCAST_DEVICEINTERFACE
+        {
+            dbcc_size = System.Runtime.InteropServices.Marshal.SizeOf<DEV_BROADCAST_DEVICEINTERFACE>(),
+            dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE,
+            dbcc_classguid = DeviceInterfaceWpd,
+        };
+        var buffer = System.Runtime.InteropServices.Marshal.AllocHGlobal(filter.dbcc_size);
+        try
+        {
+            System.Runtime.InteropServices.Marshal.StructureToPtr(filter, buffer, false);
+            _deviceNotify = RegisterDeviceNotification(hwnd, buffer, DEVICE_NOTIFY_WINDOW_HANDLE);
+        }
+        catch
+        {
+            _deviceNotify = 0;
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    /// <summary>ネットワークが戻ったら、記憶されたネットワークドライブを繋ぎ直す。
+    /// (ワーカースレッドから飛んでくるので UI スレッドに移す。連打は ViewModel 側で吸収)</summary>
+    private void OnNetworkAddressChanged(object? sender, EventArgs e)
+        => Dispatcher.BeginInvoke(() => _ = _vm.ReconnectNetworkDrivesAsync());
+
+    /// <summary>抜き差しの通知は 1 回の操作でも複数飛んでくる (機器 + ボリューム等) ので、
+    /// 少し待って 1 回だけホーム列を読み直す。</summary>
+    private void ScheduleHomeRefresh()
+    {
+        if (_deviceTimer is null)
+        {
+            _deviceTimer = new System.Windows.Threading.DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(1200),
+            };
+            _deviceTimer.Tick += async (_, _) =>
+            {
+                _deviceTimer!.Stop();
+                await _vm.RefreshHomeColumnsAsync();
+            };
+        }
+        _deviceTimer.Stop();
+        _deviceTimer.Start();
+    }
+
     private nint ClipboardWndProc(nint hwnd, int msg, nint wParam, nint lParam, ref bool handled)
     {
+        // ドライブ / ポータブル機器の抜き差し → ホーム列の顔ぶれを取り直す
+        if (msg == WM_DEVICECHANGE)
+        {
+            var evt = wParam.ToInt64();
+            if (evt is DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE)
+                ScheduleHomeRefresh();
+            return 0;
+        }
+
         // システムのライト/ダーク切替に追従
         if (msg == WM_SETTINGCHANGE)
         {
@@ -663,6 +757,14 @@ public partial class MainWindow : Window
         StopDragWheelHook();
         if (new WindowInteropHelper(this).Handle is var hwnd && hwnd != 0)
             RemoveClipboardFormatListener(hwnd);
+        System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged -= OnNetworkAddressChanged;
+        _deviceTimer?.Stop();
+        _deviceTimer = null;
+        if (_deviceNotify != 0)
+        {
+            UnregisterDeviceNotification(_deviceNotify);
+            _deviceNotify = 0;
+        }
         // ドラッグ中に閉じられた場合、結合先に強調が残ったままにならないよう戻す
         _mergeTarget?.SetMergeHighlight(false);
         _mergeTarget = null;
@@ -920,6 +1022,12 @@ public partial class MainWindow : Window
             case ShellMenuResult.ShellInvoked when refreshDir is not null:
                 await _vm.RefreshColumnsAsync(new[] { refreshDir });
                 break;
+            // ポータブルデバイスは実パスを持たないので、独自項目 (お気に入り) や
+            // ファイル名変更の対象にはできない (シェル側の項目は普通に効く)
+            case ShellMenuResult.Rename when item is { IsShellDevice: true }:
+            case ShellMenuResult.AddFavorite when item is { IsShellDevice: true }:
+                _vm.StatusText = "ポータブル デバイスにはこの操作を使えません";
+                break;
             case ShellMenuResult.Rename when item is not null:
                 if (PromptText("名前の変更", "新しい名前:", item.Name, selectStem: true) is { } newName)
                     await _vm.RenameAsync(item, newName);
@@ -1099,7 +1207,10 @@ public partial class MainWindow : Window
 
     private void Column_MouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
-        if (sender is ListBox { SelectedItem: FileSystemItem item } && !item.IsDirectory)
+        // 切断中のネットワークドライブはフォルダ扱いだが、開くには接続が要るので
+        // ダブルクリックを OpenItem (= 接続してから開く) に回す
+        if (sender is ListBox { SelectedItem: FileSystemItem item }
+            && (!item.IsDirectory || item.IsDisconnectedDrive))
             _vm.OpenItem(item);
     }
 
