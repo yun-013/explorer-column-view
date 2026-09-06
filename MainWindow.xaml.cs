@@ -2072,7 +2072,7 @@ public partial class MainWindow : Window
         if (e.Key == Key.F5 && Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control)
         {
             e.Handled = true;
-            await _vm.ReloadActiveTabAsync();
+            await ReloadWithFeedbackAsync();
             return;
         }
 
@@ -2185,6 +2185,40 @@ public partial class MainWindow : Window
                     await _vm.RedoAsync();
                 }
                 break;
+        }
+    }
+
+    /// <summary>再読み込み中に列の内容を落とす濃さ。</summary>
+    private const double ReloadDimOpacity = 0.4;
+
+    /// <summary>列の内容を薄くしてから再読み込みし、終わったら元の濃さへ戻す。
+    /// 中身が変わらなかったときでも「読み直した」ことが目で分かるようにするための合図。
+    /// 速ければ一瞬の瞬き、ネットワーク越しで時間がかかるときは待っている間ずっと薄いままになる。</summary>
+    private async Task ReloadWithFeedbackAsync()
+    {
+        // 長押し (キーリピート) で二重に走らせない。先に始まった側が濃さを戻すので、
+        // ここで薄くしてしまうと戻し役がいなくなる
+        if (_vm.IsReloading)
+            return;
+
+        ColumnsHost.BeginAnimation(OpacityProperty, null); // 実行中のアニメを解除
+        ColumnsHost.Opacity = ReloadDimOpacity;
+        try
+        {
+            await _vm.ReloadActiveTabAsync();
+        }
+        finally
+        {
+            var anim = new DoubleAnimation(ReloadDimOpacity, 1, TimeSpan.FromMilliseconds(220))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            };
+            anim.Completed += (_, _) =>
+            {
+                ColumnsHost.BeginAnimation(OpacityProperty, null);
+                ColumnsHost.Opacity = 1;
+            };
+            ColumnsHost.BeginAnimation(OpacityProperty, anim);
         }
     }
 

@@ -1183,6 +1183,9 @@ public class MainViewModel : ObservableObject
 
     private bool _reloading;
 
+    /// <summary>再読み込みの実行中。ウィンドウ側が合図の演出を二重に出さないために見る。</summary>
+    public bool IsReloading => _reloading;
+
     private async Task ReloadTabAsync(TabModel tab)
     {
         // 消えたフォルダは読み直せないため、その列から先を畳む。
@@ -1224,7 +1227,13 @@ public class MainViewModel : ObservableObject
 
         UpdateCurrentPathFromTab();
         if (tab.Columns.LastOrDefault() is { IsSearch: false } last)
+        {
             UpdateStatus(last);
+            // 中身が変わっていないと件数も同じで動きが見えないので、実行したこと自体を言う
+            // (Error のときは UpdateStatus がその内容を出しているので上書きしない)
+            if (last.Error is null)
+                StatusText = "再読み込みしました — " + StatusText;
+        }
 
         // 検索列は最後に (件数の途中経過を出すので、ステータスの上書き合戦にならない)
         if (tab.Columns.LastOrDefault(c => c.IsSearch) is { } search)
