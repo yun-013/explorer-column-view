@@ -2066,6 +2066,16 @@ public partial class MainWindow : Window
             return;
         }
 
+        // F5: 表示中のタブを読み直す。監視の効かない場所 (ネットワークドライブ・ホーム列の
+        // ドライブ一覧・グループ列) は自動更新が来ないので、手動の更新手段を用意する。
+        // Ctrl+F5 もブラウザーの癖で押されがちなので同じ扱いにする
+        if (e.Key == Key.F5 && Keyboard.Modifiers is ModifierKeys.None or ModifierKeys.Control)
+        {
+            e.Handled = true;
+            await _vm.ReloadActiveTabAsync();
+            return;
+        }
+
         if (Keyboard.Modifiers == ModifierKeys.Alt)
         {
             switch (e.SystemKey)
