@@ -1160,6 +1160,108 @@ public class MainViewModel : ObservableObject
         }
     }
 
+    /// <summary>アクティブなタブを再読み込みする (F5)。開いている階層と選択はそのまま保ち、
+    /// 消えたフォルダの列だけ畳む。検索列は結果を復元できないので同じ検索語で走査し直す。</summary>
+    public async Task ReloadActiveTabAsync()
+    {
+        // 復元待ちのタブは列がまだ無い (MaterializeAsync が作る) ので触らない
+        if (_reloading || ActiveTab is not { Pending: null } tab)
+            return;
+
+        // F5 の長押し (キーリピート) で再読み込みが重なると、同じ列への
+        // 列挙とアイコン読み込みが無駄に走るので 1 本に絞る
+        _reloading = true;
+        try
+        {
+            await ReloadTabAsync(tab);
+        }
+        finally
+        {
+            _reloading = false;
+        }
+    }
+
+    private bool _reloading;
+
+    private async Task ReloadTabAsync(TabModel tab)
+    {
+        // 消えたフォルダは読み直せないため、その列から先を畳む。
+        // 先頭列ごと消えていたら、残っている一番近い親 (無ければホーム) から作り直す
+        for (var i = 0; i < tab.Columns.Count; i++)
+        {
+            if (tab.Columns[i].Path is not { } path || Directory.Exists(path))
+                continue;
+            if (i > 0)
+            {
+                TrimColumns(tab, i);
+                break;
+            }
+            var fallback = NearestExistingAncestor(path);
+            await ResetTabAsync(tab, fallback);
+            PushHistory(tab, fallback);
+            StatusText = $"フォルダが見つかりません: {path}";
+            return;
+        }
+
+        _navigatingDepth++;
+        try
+        {
+            foreach (var column in tab.Columns.ToList())
+            {
+                if (column.IsSearch)
+                    continue; // 走査に時間がかかるので、他の列を戻してから下でやり直す
+                var selectedPath = column.SelectedItem?.Path;
+                await column.LoadAsync(ShowHidden, CurrentComparison);
+                if (selectedPath is not null)
+                    column.SelectedItem = column.Items.FirstOrDefault(
+                        i => string.Equals(i.Path, selectedPath, StringComparison.OrdinalIgnoreCase));
+            }
+        }
+        finally
+        {
+            _navigatingDepth--;
+        }
+
+        UpdateCurrentPathFromTab();
+        if (tab.Columns.LastOrDefault() is { IsSearch: false } last)
+            UpdateStatus(last);
+
+        // 検索列は最後に (件数の途中経過を出すので、ステータスの上書き合戦にならない)
+        if (tab.Columns.LastOrDefault(c => c.IsSearch) is { } search)
+            await RerunSearchAsync(tab, search);
+    }
+
+    /// <summary>検索結果の列を同じ検索語で走査し直す。起点は結果列より左の一番近いフォルダ列。</summary>
+    private async Task RerunSearchAsync(TabModel tab, ColumnModel column)
+    {
+        string? scope = null;
+        for (var i = tab.Columns.IndexOf(column) - 1; i >= 0; i--)
+            if (tab.Columns[i].Path is { } path)
+            {
+                scope = path;
+                break;
+            }
+        if (string.IsNullOrEmpty(column.SearchQuery) || scope is null || !Directory.Exists(scope))
+            return;
+
+        _searchCts?.Cancel();
+        column.SearchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        column.SearchCts = cts; // 列が閉じられたら走査も止まる
+        StatusText = $"検索中… ({scope})";
+        await RunSearchAsync(column, scope, column.SearchQuery, ShowHidden, CurrentComparison, cts.Token);
+    }
+
+    /// <summary>実在する一番近い親フォルダ。どこまでたどっても無ければ null (= ホーム)。</summary>
+    private static string? NearestExistingAncestor(string path)
+    {
+        for (var dir = Path.GetDirectoryName(path); dir is not null; dir = Path.GetDirectoryName(dir))
+            if (Directory.Exists(dir))
+                return dir;
+        return null;
+    }
+
     /// <summary>列で項目が選択されたときの中核ロジック</summary>
     public async Task OnItemSelectedAsync(ColumnModel column, FileSystemItem item)
     {
