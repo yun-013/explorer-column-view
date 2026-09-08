@@ -2107,7 +2107,7 @@ public partial class MainWindow : Window
                 case Key.T:
                     // 直前に閉じたタブを開き直す (ブラウザ / エクスプローラーと同じ)
                     e.Handled = true;
-                    await _vm.ReopenClosedTabAsync();
+                    _vm.ReopenClosedTab();
                     break;
                 case Key.N:
                     e.Handled = true;
