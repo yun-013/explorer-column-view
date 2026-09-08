@@ -805,18 +805,24 @@ public class MainViewModel : ObservableObject
     /// <summary>控えた列構成をタブ 1 枚として並べる (開ける列が 1 つも無ければ何もしない)。
     /// 列の読み込みは初めてアクティブになるまで先送りするので、タブが何枚あっても
     /// 起動時に実際に読むのは 1 タブ分だけで済む。</summary>
-    private void RestoreTab(List<SessionColumn> plan)
+    private TabModel? RestoreTab(List<SessionColumn> plan) => RestoreTab(plan, Tabs.Count);
+
+    /// <summary>控えた列構成をタブ 1 枚として指定位置に差し込む (末尾以外は
+    /// 「閉じたタブを開き直す」用)。開ける列が 1 つも無ければ何もしない。</summary>
+    private TabModel? RestoreTab(List<SessionColumn> plan, int index)
     {
         if (plan.Count == 0)
-            return;
+            return null;
         var last = plan[^1];
-        Tabs.Add(new TabModel
+        var tab = new TabModel
         {
             Pending = plan,
             Title = TrimTitle(ColumnTitle(last.Path, last.GroupId)),
             History = { plan[0].Path },
             HistoryIndex = 0,
-        });
+        };
+        Tabs.Insert(Math.Clamp(index, 0, Tabs.Count), tab);
+        return tab;
     }
 
     /// <summary>復元待ちのタブを実際の列へ展開する (初めてアクティブになったとき)。</summary>
@@ -891,15 +897,7 @@ public class MainViewModel : ObservableObject
     /// (3) 選択が控えられていない列は、その右隣を開いた項目で補う (旧形式からの移行用)。</summary>
     private List<SessionColumn> PlanRestore(List<SessionColumn> saved, List<string> anchors)
     {
-        var plan = new List<SessionColumn>();
-        foreach (var desc in saved)
-        {
-            if (desc.GroupId is { } gid && _settings.FindGroup(gid) is null)
-                break; // 消えたグループ: ここから右は再現できない
-            if (desc is { GroupId: null, Path: { } path } && !Directory.Exists(path))
-                break;
-            plan.Add(new SessionColumn { Path = desc.Path, GroupId = desc.GroupId, Selected = desc.Selected });
-        }
+        var plan = TrimToAvailable(saved);
         if (plan.Count == 0)
             return plan;
 
@@ -917,6 +915,22 @@ public class MainViewModel : ObservableObject
 
         static string? KeyOf(SessionColumn column)
             => column.GroupId is { } gid ? "group:" + gid : column.Path;
+    }
+
+    /// <summary>控えた列構成のうち、いま開けるところまでを取り出す
+    /// (消えたフォルダ・グループから右は再現できないので切り落とす)。</summary>
+    private List<SessionColumn> TrimToAvailable(List<SessionColumn> saved)
+    {
+        var plan = new List<SessionColumn>();
+        foreach (var desc in saved)
+        {
+            if (desc.GroupId is { } gid && _settings.FindGroup(gid) is null)
+                break;
+            if (desc is { GroupId: null, Path: { } path } && !Directory.Exists(path))
+                break;
+            plan.Add(new SessionColumn { Path = desc.Path, GroupId = desc.GroupId, Selected = desc.Selected });
+        }
+        return plan;
     }
 
     /// <summary>ホームからの道筋の起点候補 (お気に入り・既知フォルダ・クラウドルート)。
@@ -1027,13 +1041,10 @@ public class MainViewModel : ObservableObject
         return p.Length == a.Length || p[a.Length] == '\\';
     }
 
-    public Task NewTabAsync(string? path) => NewTabAsync(path, Tabs.Count);
-
-    /// <summary>タブを指定位置に開く (末尾以外は「閉じたタブを開き直す」用)。</summary>
-    public async Task NewTabAsync(string? path, int index)
+    public async Task NewTabAsync(string? path)
     {
         var tab = new TabModel();
-        Tabs.Insert(Math.Clamp(index, 0, Tabs.Count), tab);
+        Tabs.Add(tab);
         ActiveTab = tab;
         await ResetTabAsync(tab, path);
         PushHistory(tab, path);
@@ -1054,34 +1065,34 @@ public class MainViewModel : ObservableObject
 
     /// <summary>閉じたタブの控え (新しいものが末尾)。全ウィンドウで共有するので、
     /// 最後のタブを閉じてウィンドウごと消えた場合も別のウィンドウで開き直せる。</summary>
-    private static readonly List<(string? Path, int Index)> _closedTabs = new();
+    private static readonly List<(List<SessionColumn> Columns, int Index)> _closedTabs = new();
 
     private const int ClosedTabLimit = 10;
 
-    /// <summary>閉じたタブを「最深フォルダ + タブ列での位置」に畳んで控える。
-    /// 列の重なりまでは覚えない (セッション復元と違い、開き直したフォルダから
-    /// 改めて潜れれば足りるため)。</summary>
+    /// <summary>閉じたタブを「列の並び (選択込み) + タブ列での位置」で控える
+    /// (セッション復元と同じ形なので、開き直すと閉じたときの列構成がそのまま戻る)。</summary>
     private void RememberClosedTab(TabModel tab, int index)
     {
-        var deepest = tab.Columns.LastOrDefault(c => c.Path is not null)?.Path
-            ?? tab.Pending?.LastOrDefault(c => c.Path is not null)?.Path;
-        _closedTabs.Add((deepest, index));
+        var columns = CaptureTab(tab).Columns;
+        if (columns.Count == 0)
+            return; // 検索列しか無いタブ: 再現できるものが無いので控えない
+        _closedTabs.Add((columns, index));
         if (_closedTabs.Count > ClosedTabLimit)
             _closedTabs.RemoveAt(0);
     }
 
     /// <summary>直前に閉じたタブをこのウィンドウの元の位置に開き直す (別ウィンドウで
-    /// 閉じたものは位置が丸められる)。すでに消えたフォルダの控えは捨てて、さらに前の
-    /// 控えへさかのぼる (控えが尽きたら何もしない)。</summary>
-    public async Task ReopenClosedTabAsync()
+    /// 閉じたものは位置が丸められる)。消えたフォルダから右は落とし、起点ごと消えていた
+    /// 控えは捨ててさらに前の控えへさかのぼる (控えが尽きたら何もしない)。</summary>
+    public void ReopenClosedTab()
     {
         while (_closedTabs.Count > 0)
         {
-            var (path, index) = _closedTabs[^1];
+            var (columns, index) = _closedTabs[^1];
             _closedTabs.RemoveAt(_closedTabs.Count - 1);
-            if (path is not null && !Directory.Exists(path))
+            if (RestoreTab(TrimToAvailable(columns), index) is not { } tab)
                 continue;
-            await NewTabAsync(path, index);
+            ActiveTab = tab; // 列の読み込みはセッション復元と同じく展開に任せる
             return;
         }
     }
