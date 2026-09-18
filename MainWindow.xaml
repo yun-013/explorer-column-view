@@ -671,17 +671,6 @@
                 <StatusBarItem>
                     <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextPrimaryBrush}"/>
                 </StatusBarItem>
-                <StatusBarItem HorizontalAlignment="Right">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="Space: プレビュー (Seer)   " Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE753;" Foreground="SteelBlue" VerticalAlignment="Center"/>
-                        <TextBlock Text=" オンラインのみ  " Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE73E;" Foreground="SeaGreen" VerticalAlignment="Center"/>
-                        <TextBlock Text=" ローカルあり  " Foreground="{DynamicResource TextSecondaryBrush}"/>
-                        <TextBlock FontFamily="{StaticResource IconFont}" Text="&#xE840;" Foreground="SeaGreen" VerticalAlignment="Center"/>
-                        <TextBlock Text=" 常に保持" Foreground="{DynamicResource TextSecondaryBrush}"/>
-                    </StackPanel>
-                </StatusBarItem>
             </StatusBar>
 
             <!-- カラム表示: 独立した浮遊カード (背景をこのカード1枚に統一し、開いている列と余白の色差を無くす) -->
