@@ -1,12 +1,11 @@
 using System.IO;
 using System.Runtime.InteropServices;
-using Microsoft.VisualBasic.FileIO;
 
 namespace ColumnView;
 
 /// <summary>
 /// ドロップされたファイル / フォルダの移動・コピー。
-/// Windows 標準の進捗ダイアログと上書き確認 UI (UIOption.AllDialogs) を使うため、
+/// Windows 標準の進捗ダイアログと上書き確認 UI (IFileOperation) を使うため、
 /// エクスプローラーと同じ操作感になる。
 /// </summary>
 public static class FileOps
@@ -54,8 +53,8 @@ public static class FileOps
         out string? error, out List<(string Source, string Dest)> performed)
     {
         error = null;
-        performed = new List<(string, string)>();
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetDir };
+        var items = new List<ShellFileOperation.Item>();
 
         foreach (var src in sources)
         {
@@ -79,29 +78,12 @@ public static class FileOps
                 if (!copy && string.Equals(parent, targetDir, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var dest = Path.Combine(targetDir, name);
-
                 // 同じフォルダへのコピーは「◯◯ - コピー」を作る (エクスプローラーと同じ)
-                if (copy && string.Equals(Path.GetFullPath(dest), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
-                    dest = UniqueCopyName(targetDir, name, isDir);
+                string? newName = null;
+                if (copy && string.Equals(Path.GetFullPath(Path.Combine(targetDir, name)), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
+                    newName = Path.GetFileName(UniqueCopyName(targetDir, name, isDir));
 
-                if (copy)
-                {
-                    if (isDir) FileSystem.CopyDirectory(src, dest, UIOption.AllDialogs);
-                    else FileSystem.CopyFile(src, dest, UIOption.AllDialogs);
-                }
-                else
-                {
-                    if (isDir) FileSystem.MoveDirectory(src, dest, UIOption.AllDialogs);
-                    else FileSystem.MoveFile(src, dest, UIOption.AllDialogs);
-                    if (parent is not null)
-                        affected.Add(parent);
-                }
-                performed.Add((trimmed, dest));
-            }
-            catch (OperationCanceledException)
-            {
-                // ユーザーがダイアログでキャンセルした
+                items.Add(new(trimmed, targetDir, newName));
             }
             catch (Exception ex)
             {
@@ -109,8 +91,30 @@ public static class FileOps
             }
         }
 
+        // 全項目を 1 回のシェル操作にまとめる (上書き確認の「すべてに適用」が全体に効く)
+        performed = ShellFileOperation.Run(items, copy, GetActiveWindow(), out var shellError);
+        error = shellError ?? error;
+        if (!copy)
+            foreach (var (source, _) in performed)
+                if (Path.GetDirectoryName(source) is { } parent)
+                    affected.Add(parent);
         return affected;
     }
+
+    /// <summary>
+    /// (元, 先のフルパス) の組をまとめて 1 回のシェル操作で移動する (取り消し / やり直し用)。
+    /// 戻り値は実際に移動できた組。error=null ならキャンセル以外の失敗なし。
+    /// </summary>
+    public static List<(string Source, string Dest)> MoveAll(IReadOnlyList<(string From, string To)> moves, out string? error)
+    {
+        var items = moves
+            .Select(m => new ShellFileOperation.Item(m.From, Path.GetDirectoryName(m.To) ?? m.To, Path.GetFileName(m.To)))
+            .ToList();
+        return ShellFileOperation.Run(items, copy: false, GetActiveWindow(), out error);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern nint GetActiveWindow();
 
     /// <summary>「名前 - コピー.ext」「名前 - コピー (2).ext」… の空き名を返す。</summary>
     private static string UniqueCopyName(string dir, string name, bool isDir)

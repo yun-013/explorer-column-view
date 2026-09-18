@@ -1,5 +1,4 @@
 using System.IO;
-using Microsoft.VisualBasic.FileIO;
 
 namespace ColumnView;
 
@@ -99,6 +98,7 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
     {
         error = null;
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var moves = new List<(string From, string To)>();
         foreach (var (source, dest) in pairs.Reverse())
         {
             if (Path.GetDirectoryName(source.TrimEnd('\\')) is { } srcDir)
@@ -110,22 +110,21 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
                 // 移動先の親が消えていても戻せるように作り直す (掃除済みの退避フォルダへのやり直し等)
                 if (Path.GetDirectoryName(source.TrimEnd('\\')) is { Length: > 0 } parent)
                     Directory.CreateDirectory(parent);
-                if (Directory.Exists(dest))
-                    FileSystem.MoveDirectory(dest, source, UIOption.AllDialogs);
-                else if (File.Exists(dest))
-                    FileSystem.MoveFile(dest, source, UIOption.AllDialogs);
+                if (Directory.Exists(dest) || File.Exists(dest))
+                    moves.Add((dest, source));
                 else
                     error = "一部の項目が見つかりませんでした";
-            }
-            catch (OperationCanceledException)
-            {
-                // ユーザーがダイアログでキャンセルした
             }
             catch (Exception ex)
             {
                 error = "元に戻せませんでした: " + ex.Message;
             }
         }
+
+        // エクスプローラーと同じく 1 回のシェル操作でまとめて戻す (ダイアログも 1 つ)
+        FileOps.MoveAll(moves, out var moveError);
+        if (moveError is not null)
+            error = "元に戻せませんでした: " + moveError;
         return affected;
     }
 }
