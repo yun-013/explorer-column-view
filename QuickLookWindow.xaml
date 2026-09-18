@@ -122,7 +122,8 @@
     <Border x:Name="Card" Margin="18" CornerRadius="12"
             Background="{DynamicResource SurfaceBrush}"
             SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged"
-            MouseEnter="Card_MouseEnter" MouseLeave="Card_MouseLeave">
+            MouseEnter="Card_MouseEnter" MouseLeave="Card_MouseLeave"
+            PreviewMouseWheel="Card_PreviewMouseWheel">
         <Border.Effect>
             <DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.32" Color="Black"/>
         </Border.Effect>
