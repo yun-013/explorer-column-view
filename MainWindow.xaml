@@ -625,11 +625,15 @@
                                 <!-- 深い階層でパンくずが幅いっぱいでも、直入力に入るためのクリック余地を右端に常に残す -->
                                 <Border DockPanel.Dock="Right" Width="36" Background="Transparent"/>
                                 <!-- 深い階層では先頭ではなく末尾 (現在地) 側を見せる。
+                                     ScrollViewer だけ右→左にして「スクロール位置 0 = 末尾が見える状態」にする
+                                     (中身が伸び縮みしても位置 0 のままなので、末尾に合わせ直す必要がない)。
                                      背景を透明で塗ってパンくず間・上下の余白もクリックを拾えるようにする -->
                                 <ScrollViewer x:Name="CrumbScroll" HorizontalScrollBarVisibility="Hidden"
                                               VerticalScrollBarVisibility="Disabled" Focusable="False"
-                                              Background="Transparent">
-                                <ItemsControl ItemsSource="{Binding Breadcrumbs}" VerticalAlignment="Center">
+                                              Background="Transparent" FlowDirection="RightToLeft">
+                                <ItemsControl ItemsSource="{Binding Breadcrumbs}" VerticalAlignment="Center"
+                                              FlowDirection="LeftToRight"
+                                              RequestBringIntoView="CrumbItems_RequestBringIntoView">
                                     <ItemsControl.ItemsPanel>
                                         <ItemsPanelTemplate>
                                             <StackPanel Orientation="Horizontal"/>
@@ -651,7 +655,7 @@
                                                         </Style>
                                                     </TextBlock.Style>
                                                 </TextBlock>
-                                                <Button Style="{StaticResource CrumbButton}" Content="{Binding Display}"
+                                                <Button Style="{StaticResource CrumbButton}" Content="{Binding Display}" Focusable="False"
                                                         Tag="{Binding}" Click="Crumb_Click"/>
                                             </StackPanel>
                                         </DataTemplate>

@@ -36,22 +36,10 @@ public partial class MainWindow : Window
         };
         Closed += (_, _) => { if (LastActivated == this) LastActivated = null; };
 
-        // パンくずが長いときは先頭ではなく末尾 (現在地) を見せる
-        _vm.Breadcrumbs.CollectionChanged += (_, _) =>
-            Dispatcher.BeginInvoke(new Action(() => CrumbScroll.ScrollToRightEnd()),
-                System.Windows.Threading.DispatcherPriority.Loaded);
-        // 中身の幅 (文字の測り直し等) や表示幅が後から変わっても末尾に付いていく
-        CrumbScroll.ScrollChanged += (_, e) =>
-        {
-            if (e.ExtentWidthChange != 0 || e.ViewportWidthChange != 0)
-                CrumbScroll.ScrollToRightEnd();
-        };
-        // ホイール/チルトで途中まで戻して見たあとも、ポインターが離れたら現在地 (末尾) に戻す
-        AddressBar.MouseLeave += (_, _) =>
-        {
-            if (!_vm.IsEditingAddress)
-                CrumbScroll.ScrollToRightEnd();
-        };
+        // パンくずが長いときは先頭ではなく末尾 (現在地) を見せる。CrumbScroll は右→左なので位置 0 が末尾。
+        // 場所が変わったとき・ホイール/チルトで戻して見たあとポインターが離れたときに 0 へ戻す
+        _vm.Breadcrumbs.CollectionChanged += (_, _) => CrumbScroll.ScrollToHorizontalOffset(0);
+        AddressBar.MouseLeave += (_, _) => CrumbScroll.ScrollToHorizontalOffset(0);
 
         // タブの増減・並べ替えで区切り線の表示状態を追従させる
         _vm.Tabs.CollectionChanged += (_, _) => ScheduleTabSeparatorUpdate();
@@ -422,7 +410,7 @@ public partial class MainWindow : Window
             }
             else if (AddressBar.IsMouseOver && !_vm.IsEditingAddress)
             {
-                CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset + delta / 3.0);
+                CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset - delta / 3.0); // 右→左なので符号が逆
                 handled = true;
             }
             else if (ColumnsScroll.IsMouseOver)
@@ -2037,14 +2025,19 @@ public partial class MainWindow : Window
         return false;
     }
 
-    /// <summary>アドレスバー上の通常ホイールはパンくずの横スクロールにする (縦には動かないため)。</summary>
+    /// <summary>アドレスバー上の通常ホイールはパンくずの横スクロールにする (縦には動かないため)。
+    /// 上 = 先頭側 (左) へ。CrumbScroll は右→左なので、左へ行くほど HorizontalOffset が増える。</summary>
     private void AddressBar_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (_vm.IsEditingAddress)
             return;
-        CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset - e.Delta / 3.0);
+        CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset + e.Delta / 3.0);
         e.Handled = true;
     }
+
+    /// <summary>パンくずの要素が勝手にスクロールを動かさないようにする (末尾表示を崩さない)。</summary>
+    private void CrumbItems_RequestBringIntoView(object sender, RequestBringIntoViewEventArgs e)
+        => e.Handled = true;
 
     private void BeginAddressEdit()
     {
