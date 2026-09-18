@@ -409,6 +409,11 @@ public partial class MainWindow : Window
                     sv.ScrollToHorizontalOffset(sv.HorizontalOffset + delta / 3.0);
                 handled = true;
             }
+            else if (AddressBar.IsMouseOver && !_vm.IsEditingAddress)
+            {
+                CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset + delta / 3.0);
+                handled = true;
+            }
             else if (ColumnsScroll.IsMouseOver)
             {
                 ColumnsScroll.ScrollToHorizontalOffset(ColumnsScroll.HorizontalOffset + delta);
@@ -1999,9 +2004,35 @@ public partial class MainWindow : Window
 
     private void AddressBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // パンくずの余白をクリック → 編集モード (テキスト入力)
-        if (e.OriginalSource is Border || e.OriginalSource is Grid)
-            BeginAddressEdit();
+        // パンくずのボタン以外 (余白・区切りの「›」・アイコン) をクリック → 編集モード (テキスト入力)。
+        // 押した瞬間に切り替えて、そのままキー入力できるようにする
+        if (_vm.IsEditingAddress || IsInsideButton(e.OriginalSource as DependencyObject))
+            return;
+        BeginAddressEdit();
+        e.Handled = true;
+    }
+
+    private static bool IsInsideButton(DependencyObject? d)
+    {
+        while (d is not null)
+        {
+            if (d is System.Windows.Controls.Primitives.ButtonBase)
+                return true;
+            // TextBlock 内の Run などは Visual ではないので論理ツリーで辿る
+            d = d is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(d)
+                : LogicalTreeHelper.GetParent(d);
+        }
+        return false;
+    }
+
+    /// <summary>アドレスバー上の通常ホイールはパンくずの横スクロールにする (縦には動かないため)。</summary>
+    private void AddressBar_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (_vm.IsEditingAddress)
+            return;
+        CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset - e.Delta / 3.0);
+        e.Handled = true;
     }
 
     private void BeginAddressEdit()
