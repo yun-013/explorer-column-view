@@ -41,12 +41,8 @@ public partial class MainWindow : Window
         _vm.PreviewFollow = FollowQuickLook;
 
         // タブ切替で列の表示が作り直されても、各列の縦スクロール位置を引き継ぐ
+        // (復元は列の ListBox の Loaded = ColumnList_Loaded で行う)
         _vm.ActiveTabChanging += SaveColumnScroll;
-        _vm.PropertyChanged += (_, e) =>
-        {
-            if (e.PropertyName == nameof(MainViewModel.ActiveTab))
-                ScheduleColumnScrollRestore();
-        };
     }
 
     /// <summary>別プロセス (フォルダーのダブルクリックや Win+E) から渡されたフォルダーを
@@ -1225,14 +1221,8 @@ public partial class MainWindow : Window
     // 保持するのは列ごとの数値 1 つだけ。非アクティブなタブの表示 (ListBox) を
     // 生かしておく方式はメモリを食うので採らない。切替時にだけ動くので常時の負荷も無い。
 
-    /// <summary>表示の作り直し待ちで、まだ位置を戻していないタブ。
-    /// その間に離れても、未描画の (位置 0 の) 表示で控えを上書きしない。</summary>
-    private TabModel? _scrollRestorePending;
-
     private void SaveColumnScroll(TabModel leaving)
     {
-        if (leaving == _scrollRestorePending)
-            return;
         foreach (var (column, sv) in ColumnScrollViewers())
         {
             if (leaving.Columns.Contains(column))
@@ -1240,35 +1230,29 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ScheduleColumnScrollRestore()
+    /// <summary>作り直された列の ListBox に控えておいた位置を戻す。Loaded はレイアウト後・
+    /// 最初の描画前に届き、ここでのスクロールも描画前のレイアウトで反映されるので、
+    /// 一瞬だけ最上段が見えるチラつきが出ない。控えは 1 回使ったら捨てる
+    /// (タブを別ウィンドウへ移したときなどに古い位置へ飛ばないように)。</summary>
+    private void ColumnList_Loaded(object sender, RoutedEventArgs e)
     {
-        if (_vm.ActiveTab is not { } tab)
-            return;
-        _scrollRestorePending = tab;
-        // 列の ListBox が生成・レイアウトされた後で戻す
-        Dispatcher.BeginInvoke(new Action(() =>
+        if (sender is ListBox { DataContext: ColumnModel { ScrollOffset: > 0 } column } lb
+            && FindDescendant<ScrollViewer>(lb) is { } sv)
         {
-            if (_scrollRestorePending != tab)
-                return;
-            _scrollRestorePending = null;
-            if (_vm.ActiveTab != tab)
-                return;
-            foreach (var (column, sv) in ColumnScrollViewers())
-            {
-                if (column.ScrollOffset > 0 && tab.Columns.Contains(column))
-                    sv.ScrollToVerticalOffset(column.ScrollOffset);
-            }
-        }), System.Windows.Threading.DispatcherPriority.Loaded);
+            sv.ScrollToVerticalOffset(column.ScrollOffset);
+            column.ScrollOffset = 0;
+        }
     }
 
-    /// <summary>表示中の各列とその ListBox の ScrollViewer。</summary>
+    /// <summary>表示中の各列とその ListBox の ScrollViewer。Loaded 前 (位置を戻す前) の列は
+    /// 含めない。素早く連続で切り替えたとき、未描画の位置 0 で控えを上書きしないため。</summary>
     private IEnumerable<(ColumnModel Column, ScrollViewer Viewer)> ColumnScrollViewers()
     {
         var gen = ColumnsHost.ItemContainerGenerator;
         for (var i = 0; i < ColumnsHost.Items.Count; i++)
         {
             if (gen.ContainerFromIndex(i) is FrameworkElement { DataContext: ColumnModel column } container
-                && FindDescendant<ListBox>(container) is { } lb
+                && FindDescendant<ListBox>(container) is { IsLoaded: true } lb
                 && FindDescendant<ScrollViewer>(lb) is { } sv)
                 yield return (column, sv);
         }
