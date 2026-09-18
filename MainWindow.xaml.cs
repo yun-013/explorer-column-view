@@ -1036,12 +1036,8 @@ public partial class MainWindow : Window
                 await _vm.ToggleFavoriteAsync(targetPath);
                 break;
             case ShellMenuResult.CopyPath:
-                try
-                {
-                    Clipboard.SetText(targetPath);
+                if (ClipboardOps.SetText(targetPath))
                     _vm.StatusText = $"パスをコピーしました: {targetPath}";
-                }
-                catch { /* クリップボードが他アプリに占有されている場合は無視 */ }
                 break;
         }
     }

@@ -1428,16 +1428,15 @@ public class MainViewModel : ObservableObject
     {
         if (item is null)
             return;
-        try
-        {
-            System.Windows.Clipboard.SetText(item.Path);
-            StatusText = $"パスをコピーしました: {item.Path}";
-        }
-        catch (Exception ex)
-        {
-            StatusText = "コピーできませんでした: " + ex.Message;
-        }
+        StatusText = ClipboardOps.SetText(item.Path)
+            ? $"パスをコピーしました: {item.Path}"
+            : ClipboardBusyMessage();
     }
+
+    private static string ClipboardBusyMessage()
+        => ClipboardOps.LastBlocker is { } who
+            ? $"クリップボードを使用できませんでした ({who} が使用中)"
+            : "クリップボードを使用できませんでした";
 
     // ---- クリップボード (コピー / 切り取り / 貼り付け) ・削除・新規フォルダ ----
 
@@ -1448,7 +1447,7 @@ public class MainViewModel : ObservableObject
             return;
         if (!ClipboardOps.SetFiles(paths, cut))
         {
-            StatusText = "クリップボードを使用できませんでした";
+            StatusText = ClipboardBusyMessage();
             return;
         }
         ClipboardMarks.Set(paths, cut);
