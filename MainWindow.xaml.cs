@@ -1337,6 +1337,7 @@ public partial class MainWindow : Window
     private FileSystemItem? _groupDragCandidate;
     private FileSystemItem? _memberDragCandidate;
     private FileSystemItem? _reclickItem;
+    private FileSystemItem? _reselectItem;
     private bool _isDragging;
     private ListBoxItem? _dropHighlight;
     private ListBoxItem? _insertIndicator;
@@ -1355,6 +1356,13 @@ public partial class MainWindow : Window
         _groupDragCandidate = null;
         _memberDragCandidate = null;
         var item = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as FileSystemItem;
+
+        // 既に単独選択中の項目を押した: 選択が変わらず SelectionChanged が来ないので、
+        // 離したときに奥の列を畳む (入れ子の途中のフォルダをクリック → そのフォルダを表示)
+        _reselectItem = sender is ListBox single && item is not null
+            && single.SelectedItems.Count == 1 && ReferenceEquals(single.SelectedItem, item)
+            && Keyboard.Modifiers == ModifierKeys.None
+            ? item : null;
 
         // グループ見出し: クリックは通常選択 (= 中身を次の列に展開)、ドラッグは並べ替え / 入れ子化
         _groupDragCandidate = item is { IsGroupEntry: true } ? item : null;
@@ -1380,7 +1388,7 @@ public partial class MainWindow : Window
             TryBeginBand(sender, e);
     }
 
-    private void Column_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    private async void Column_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         EndBand();
         // 複数選択を掴んだがドラッグしなかった = 通常クリック → その項目だけ選択
@@ -1393,6 +1401,17 @@ public partial class MainWindow : Window
         _favDragCandidate = null;
         _groupDragCandidate = null;
         _memberDragCandidate = null;
+
+        // 単独選択中の項目をドラッグせずにクリックした → 奥の列を畳んでその項目の列を末尾に
+        var reselect = _reselectItem;
+        _reselectItem = null;
+        if (reselect is null || _isDragging || sender is not ListBox { DataContext: ColumnModel column }
+            || FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext != reselect)
+            return;
+        var pos = e.GetPosition(null);
+        if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance
+            && Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+            await _vm.ReselectAsync(column, reselect);
     }
 
     private void Column_PreviewMouseMove(object sender, MouseEventArgs e)

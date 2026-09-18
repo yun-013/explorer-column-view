@@ -1358,6 +1358,21 @@ public class MainViewModel : ObservableObject
         PreviewFollow?.Invoke(item);
     }
 
+    /// <summary>選択済みの項目 (奥の列を開いている途中のフォルダ) を再クリックしたとき:
+    /// 選択が変わらないので SelectionChanged が来ない。その項目を選び直した扱いにして、
+    /// 奥の列を畳み、その中身の列を末尾 (= 現在のフォルダ) にする。</summary>
+    public async Task ReselectAsync(ColumnModel column, FileSystemItem item)
+    {
+        if (Navigating || ActiveTab is not { } tab)
+            return;
+        var index = tab.Columns.IndexOf(column);
+        // 畳む対象が無い (すぐ右が中身の列で、そこで何も選んでいない) なら作り直さない
+        if (index < 0 || index + 1 >= tab.Columns.Count
+            || (index + 2 == tab.Columns.Count && tab.Columns[index + 1].SelectedItem is null))
+            return;
+        await OnItemSelectedAsync(column, item);
+    }
+
     /// <summary>Quick Look が開いているとき、選択変更を View に伝えて追従させる。</summary>
     public Action<FileSystemItem>? PreviewFollow { get; set; }
 
