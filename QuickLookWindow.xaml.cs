@@ -542,6 +542,16 @@ public partial class QuickLookWindow : Window
 
         var src = e.OriginalSource as DependencyObject;
 
+        // スクロールバーの上はスクロール操作を優先し、ウィンドウ移動にしない。
+        // 押下中にメインウィンドウをアクティブ化するとつまみのマウスキャプチャが
+        // 剥奪されてドラッグが切れる (閉じるボタンと同じ理由) ので、アクティブ化は
+        // ボタンを離したときに行う
+        if (FindAncestor<ScrollBar>(src) is not null)
+        {
+            _activateOnRelease = true;
+            return;
+        }
+
         // 閉じるボタンの押下中に他ウィンドウをアクティブ化してはいけない。
         // Button が取ったマウスキャプチャを Windows が剥奪し (WM_CAPTURECHANGED)、
         // 押下が取り消されて Click が発火しなくなる。列へのフォーカス復帰は
@@ -580,7 +590,74 @@ public partial class QuickLookWindow : Window
         Top = _dragStartTop + (now.Y - _dragStartCursor.Y) / dpi.DpiScaleY;
     }
 
-    private void Card_MouseLeftButtonUp(object sender, MouseButtonEventArgs e) => EndDrag();
+    /// <summary>スクロールバー操作の後でメインウィンドウをアクティブ化するための保留フラグ。</summary>
+    private bool _activateOnRelease;
+
+    private void Card_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndDrag();
+        if (_activateOnRelease)
+        {
+            _activateOnRelease = false;
+            ActivateOwnerAndFocusColumn();
+        }
+    }
+
+    // ---- ホイールスクロール ----
+    // WPF 既定のホイール量 (1 ノッチ = 3 行 × 16px = 48px) はプレビューでは遅すぎるので、
+    // 1 ノッチあたりの移動量を自前で決めてスクロールする。
+
+    /// <summary>1 ノッチ (Delta=120) あたりのスクロール量 (DIP)。</summary>
+    private const double WheelStep = 120;
+
+    private void Card_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        ScrollViewer? sv = null;
+        if (TextScroll.IsVisible) sv = TextScroll;
+        else if (PdfScroll.IsVisible) sv = PdfScroll;
+        else if (DocView.IsVisible) sv = FindDescendant<ScrollViewer>(DocView);
+        if (sv is null)
+            return;
+
+        double notches = e.Delta / 120.0;
+        if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+        {
+            if (sv.ScrollableWidth <= 0)
+                return;
+            sv.ScrollToHorizontalOffset(sv.HorizontalOffset - notches * WheelStep);
+        }
+        else
+        {
+            if (sv.ScrollableHeight <= 0)
+                return;
+            sv.ScrollToVerticalOffset(sv.VerticalOffset - notches * WheelStep);
+        }
+        e.Handled = true;
+    }
+
+    private static T? FindAncestor<T>(DependencyObject? node) where T : DependencyObject
+    {
+        while (node is not null)
+        {
+            if (node is T t)
+                return t;
+            node = node is Visual ? VisualTreeHelper.GetParent(node) : LogicalTreeHelper.GetParent(node);
+        }
+        return null;
+    }
+
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T t)
+                return t;
+            if (FindDescendant<T>(child) is T found)
+                return found;
+        }
+        return null;
+    }
 
     private void EndDrag()
     {
