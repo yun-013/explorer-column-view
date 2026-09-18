@@ -40,7 +40,18 @@ public partial class MainWindow : Window
         _vm.Breadcrumbs.CollectionChanged += (_, _) =>
             Dispatcher.BeginInvoke(new Action(() => CrumbScroll.ScrollToRightEnd()),
                 System.Windows.Threading.DispatcherPriority.Loaded);
-        CrumbScroll.SizeChanged += (_, _) => CrumbScroll.ScrollToRightEnd();
+        // 中身の幅 (文字の測り直し等) や表示幅が後から変わっても末尾に付いていく
+        CrumbScroll.ScrollChanged += (_, e) =>
+        {
+            if (e.ExtentWidthChange != 0 || e.ViewportWidthChange != 0)
+                CrumbScroll.ScrollToRightEnd();
+        };
+        // ホイール/チルトで途中まで戻して見たあとも、ポインターが離れたら現在地 (末尾) に戻す
+        AddressBar.MouseLeave += (_, _) =>
+        {
+            if (!_vm.IsEditingAddress)
+                CrumbScroll.ScrollToRightEnd();
+        };
 
         // タブの増減・並べ替えで区切り線の表示状態を追従させる
         _vm.Tabs.CollectionChanged += (_, _) => ScheduleTabSeparatorUpdate();
