@@ -667,14 +667,15 @@
             </Border>
 
             <!-- ステータスバー: 線で区切らず最背面 (ウィンドウ背景) にそのまま載せる -->
-            <StatusBar DockPanel.Dock="Bottom" Background="Transparent" BorderThickness="0" Margin="8,0,8,2">
-                <StatusBarItem>
+            <StatusBar DockPanel.Dock="Bottom" Background="Transparent" BorderThickness="0" Margin="10,0,8,1"
+                       FontSize="11" Padding="0">
+                <StatusBarItem Padding="0,1">
                     <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextPrimaryBrush}"/>
                 </StatusBarItem>
             </StatusBar>
 
             <!-- カラム表示: 独立した浮遊カード (背景をこのカード1枚に統一し、開いている列と余白の色差を無くす) -->
-            <Border x:Name="ColumnsCard" Margin="6,0,6,4" CornerRadius="12" Background="{DynamicResource SurfaceBrush}"
+            <Border x:Name="ColumnsCard" Margin="6,0,6,2" CornerRadius="12" Background="{DynamicResource SurfaceBrush}"
                     BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
                     Effect="{DynamicResource CardShadowBelow}">
             <!-- 角丸クリップはカードではなく中身に掛ける (カードに掛けると外側の影ごと切られて消える) -->
