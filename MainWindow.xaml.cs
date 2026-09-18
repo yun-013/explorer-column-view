@@ -2011,6 +2011,15 @@ public partial class MainWindow : Window
         e.Handled = true;
     }
 
+    /// <summary>アドレスバー上の通常ホイールもパンくずの横スクロールにする (上 = 先頭側へ)。</summary>
+    private void AddressBar_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (_vm.IsEditingAddress)
+            return;
+        CrumbScroll.ScrollToHorizontalOffset(CrumbScroll.HorizontalOffset - e.Delta / 3.0);
+        e.Handled = true;
+    }
+
     private static bool IsInsideButton(DependencyObject? d)
     {
         while (d is not null)

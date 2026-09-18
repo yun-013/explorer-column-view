@@ -605,7 +605,8 @@
                     <Border x:Name="AddressBar" Margin="6,0" Height="32" Background="{DynamicResource SurfaceBrush}"
                             BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
                             Effect="{DynamicResource SubtleShadow}" Cursor="IBeam"
-                            MouseLeftButtonDown="AddressBar_MouseLeftButtonDown">
+                            MouseLeftButtonDown="AddressBar_MouseLeftButtonDown"
+                            PreviewMouseWheel="AddressBar_PreviewMouseWheel">
                         <Grid>
                             <DockPanel>
                                 <DockPanel.Style>
