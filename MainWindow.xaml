@@ -726,6 +726,7 @@
                                              VirtualizingPanel.IsVirtualizing="True"
                                              VirtualizingPanel.VirtualizationMode="Standard"
                                              AllowDrop="True"
+                                             Loaded="ColumnList_Loaded"
                                              SelectionChanged="Column_SelectionChanged"
                                              PreviewKeyDown="Column_PreviewKeyDown"
                                              MouseDoubleClick="Column_MouseDoubleClick"
