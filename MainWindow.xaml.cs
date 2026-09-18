@@ -1102,6 +1102,13 @@ public partial class MainWindow : Window
         if (sender is not ListBox listBox || listBox.DataContext is not ColumnModel column)
             return;
 
+        // 余白からの範囲選択中: 行が 1 件ずつ増減するたびにフォルダを開かない (確定時に反映)
+        if (_band is { Active: true } band && band.List == listBox)
+        {
+            NotifyBandSelection(listBox, column, final: false);
+            return;
+        }
+
         // 複数選択時は子の列を開かず件数表示のみ
         if (listBox.SelectedItems.Count > 1)
         {
@@ -1331,10 +1338,15 @@ public partial class MainWindow : Window
             _reclickItem = item;
             e.Handled = true; // ListBox による選択の単一化を抑止
         }
+
+        // 行の外 (余白) を押した → ドラッグで範囲選択
+        if (item is null)
+            TryBeginBand(sender, e);
     }
 
     private void Column_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        EndBand();
         // 複数選択を掴んだがドラッグしなかった = 通常クリック → その項目だけ選択
         if (_reclickItem is not null && !_isDragging && sender is ListBox lb)
         {
@@ -1349,6 +1361,8 @@ public partial class MainWindow : Window
 
     private void Column_PreviewMouseMove(object sender, MouseEventArgs e)
     {
+        if (BandMouseMove(e))
+            return;
         if (_isDragging || e.LeftButton != MouseButtonState.Pressed)
             return;
         if (_dragCandidate is null && _favDragCandidate is null
