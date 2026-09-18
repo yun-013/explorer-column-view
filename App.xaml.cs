@@ -86,7 +86,7 @@ public partial class App : Application
 
         ConfigureJumpList();
 
-        new MainWindow(MainViewModel.CreateForStartup(initialFolder)).Show();
+        new MainWindow(MainViewModel.CreateForStartup(initialFolder)) { RestorePlacement = true }.Show();
     }
 
     /// <summary>引数をフォルダーパスとして解釈する (扱えないものは null)。

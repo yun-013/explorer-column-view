@@ -86,6 +86,9 @@ public class AppSettings
     /// <summary>前回アクティブだったタブの位置。</summary>
     public int SessionActiveTab { get; set; }
 
+    /// <summary>最後に閉じたウィンドウの位置・大きさ (null = 未保存。既定の大きさで開く)。</summary>
+    public SavedWindowPlacement? WindowPlacement { get; set; }
+
     private static readonly string FilePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ColumnView", "settings.json");
 
