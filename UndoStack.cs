@@ -98,6 +98,7 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
     {
         error = null;
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var moves = new List<(string From, string To)>();
         foreach (var (source, dest) in pairs.Reverse())
         {
             if (Path.GetDirectoryName(source.TrimEnd('\\')) is { } srcDir)
@@ -110,21 +111,20 @@ public sealed class MoveOp(IReadOnlyList<(string Source, string Dest)> pairs, st
                 if (Path.GetDirectoryName(source.TrimEnd('\\')) is { Length: > 0 } parent)
                     Directory.CreateDirectory(parent);
                 if (Directory.Exists(dest) || File.Exists(dest))
-                {
-                    // 失敗時の moveError=null はユーザーのキャンセル
-                    if (!FileOps.Move(dest, source, out var moveError) && moveError is not null)
-                        error = "元に戻せませんでした: " + moveError;
-                }
+                    moves.Add((dest, source));
                 else
-                {
                     error = "一部の項目が見つかりませんでした";
-                }
             }
             catch (Exception ex)
             {
                 error = "元に戻せませんでした: " + ex.Message;
             }
         }
+
+        // エクスプローラーと同じく 1 回のシェル操作でまとめて戻す (ダイアログも 1 つ)
+        FileOps.MoveAll(moves, out var moveError);
+        if (moveError is not null)
+            error = "元に戻せませんでした: " + moveError;
         return affected;
     }
 }

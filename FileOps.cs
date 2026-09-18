@@ -5,7 +5,7 @@ namespace ColumnView;
 
 /// <summary>
 /// ドロップされたファイル / フォルダの移動・コピー。
-/// Windows 標準の進捗ダイアログと上書き確認 UI (SHFileOperation) を使うため、
+/// Windows 標準の進捗ダイアログと上書き確認 UI (IFileOperation) を使うため、
 /// エクスプローラーと同じ操作感になる。
 /// </summary>
 public static class FileOps
@@ -53,8 +53,8 @@ public static class FileOps
         out string? error, out List<(string Source, string Dest)> performed)
     {
         error = null;
-        performed = new List<(string, string)>();
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetDir };
+        var items = new List<ShellFileOperation.Item>();
 
         foreach (var src in sources)
         {
@@ -78,22 +78,12 @@ public static class FileOps
                 if (!copy && string.Equals(parent, targetDir, StringComparison.OrdinalIgnoreCase))
                     continue;
 
-                var dest = Path.Combine(targetDir, name);
-
                 // 同じフォルダへのコピーは「◯◯ - コピー」を作る (エクスプローラーと同じ)
-                if (copy && string.Equals(Path.GetFullPath(dest), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
-                    dest = UniqueCopyName(targetDir, name, isDir);
+                string? newName = null;
+                if (copy && string.Equals(Path.GetFullPath(Path.Combine(targetDir, name)), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
+                    newName = Path.GetFileName(UniqueCopyName(targetDir, name, isDir));
 
-                if (!ShellTransfer(trimmed, dest, copy, isDir, out var shellError))
-                {
-                    // null = ユーザーがダイアログでキャンセルした
-                    if (shellError is not null)
-                        error = shellError;
-                    continue;
-                }
-                if (!copy && parent is not null)
-                    affected.Add(parent);
-                performed.Add((trimmed, dest));
+                items.Add(new(trimmed, targetDir, newName));
             }
             catch (Exception ex)
             {
@@ -101,68 +91,30 @@ public static class FileOps
             }
         }
 
+        // 全項目を 1 回のシェル操作にまとめる (上書き確認の「すべてに適用」が全体に効く)
+        performed = ShellFileOperation.Run(items, copy, GetActiveWindow(), out var shellError);
+        error = shellError ?? error;
+        if (!copy)
+            foreach (var (source, _) in performed)
+                if (Path.GetDirectoryName(source) is { } parent)
+                    affected.Add(parent);
         return affected;
     }
 
-    /// <summary>1 項目を移動する (取り消し用)。false で error=null はユーザーのキャンセル。</summary>
-    public static bool Move(string src, string dest, out string? error)
-        => ShellTransfer(src, dest, copy: false, Directory.Exists(src), out error);
-
-    private const int FO_MOVE = 1;
-    private const int FO_COPY = 2;
-    private const ushort FOF_NOCONFIRMMKDIR = 0x200;
-    private const ushort FOF_NO_CONNECTED_ELEMENTS = 0x2000;
+    /// <summary>
+    /// (元, 先のフルパス) の組をまとめて 1 回のシェル操作で移動する (取り消し / やり直し用)。
+    /// 戻り値は実際に移動できた組。error=null ならキャンセル以外の失敗なし。
+    /// </summary>
+    public static List<(string Source, string Dest)> MoveAll(IReadOnlyList<(string From, string To)> moves, out string? error)
+    {
+        var items = moves
+            .Select(m => new ShellFileOperation.Item(m.From, Path.GetDirectoryName(m.To) ?? m.To, Path.GetFileName(m.To)))
+            .ToList();
+        return ShellFileOperation.Run(items, copy: false, GetActiveWindow(), out error);
+    }
 
     [DllImport("user32.dll")]
     private static extern nint GetActiveWindow();
-
-    /// <summary>
-    /// 1 項目を SHFileOperation で移動 / コピーする (進捗・上書き確認はシェル標準 UI)。
-    /// 以前は Microsoft.VisualBasic の FileSystem.CopyFile 等を使っていたが、あれは
-    /// 事前のパス正規化で DirectoryInfo.GetFiles(名前)(0) を「必ず見つかる」前提で読み、
-    /// 同期中のクラウド / NAS などで一覧に一瞬現れないと IndexOutOfRangeException
-    /// (「Index was outside the bounds of the array.」) で失敗していたので、直接呼ぶ。
-    /// 戻り値 false で error=null はユーザーのキャンセル。
-    /// </summary>
-    private static bool ShellTransfer(string src, string dest, bool copy, bool isDir, out string? error)
-    {
-        error = null;
-        var from = src;
-        // フォルダの転送先が既にある場合、シェルは「その中へ」入れてしまうので、
-        // 中身を転送して統合する (VB の FileSystem.CopyDirectory と同じ振る舞い)
-        var merge = isDir && Directory.Exists(dest);
-        if (merge)
-            from = Path.Combine(src, "*");
-
-        var op = new SHFILEOPSTRUCTW
-        {
-            hwnd = GetActiveWindow(),
-            wFunc = copy ? (uint)FO_COPY : FO_MOVE,
-            pFrom = from + "\0\0",
-            pTo = dest + "\0\0",
-            fFlags = FOF_NOCONFIRMMKDIR | FOF_NO_CONNECTED_ELEMENTS,
-        };
-        var result = SHFileOperationW(ref op);
-        if (op.fAnyOperationsAborted)
-            return false;
-        if (result != 0)
-        {
-            error = $"{(copy ? "コピー" : "移動")}できませんでした: {Path.GetFileName(src)} (コード {result})";
-            return false;
-        }
-
-        // 統合移動では中身だけが移るので、空になった元フォルダを片付ける
-        if (merge && !copy)
-        {
-            try
-            {
-                if (Directory.Exists(src) && !Directory.EnumerateFileSystemEntries(src).Any())
-                    Directory.Delete(src);
-            }
-            catch { /* 残っても実害はない */ }
-        }
-        return true;
-    }
 
     /// <summary>「名前 - コピー.ext」「名前 - コピー (2).ext」… の空き名を返す。</summary>
     private static string UniqueCopyName(string dir, string name, bool isDir)
