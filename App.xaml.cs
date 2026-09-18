@@ -68,14 +68,18 @@ public partial class App : Application
             ? SingleInstance.NewWindowRequest
             : initialFolder ?? SingleInstance.HomeRequest;
 
-        _instanceMutex = new Mutex(true, SingleInstance.MutexName, out var isFirst);
-        if (!isFirst && SingleInstance.TrySendToExisting(request))
+        // 開発用の分離プロファイル (COLUMNVIEW_PROFILE_DIR) では常用版と連携せず独立して起動する
+        if (AppSettings.DevProfileDir == null)
         {
-            Shutdown();
-            return;
+            _instanceMutex = new Mutex(true, SingleInstance.MutexName, out var isFirst);
+            if (!isFirst && SingleInstance.TrySendToExisting(request))
+            {
+                Shutdown();
+                return;
+            }
+            if (isFirst)
+                SingleInstance.StartServer(OpenFolderInExistingWindow);
         }
-        if (isFirst)
-            SingleInstance.StartServer(OpenFolderInExistingWindow);
 
         // Windows の「アプリのモード」(ライト/ダーク) に追従
         ApplySystemTheme();
@@ -249,13 +253,13 @@ public partial class App : Application
         if (dark)
         {
             // 温かみのあるダーク (Claude のダークモード風の焦げ茶ベース)
-            Set("AccentBrush", "#D97757");
-            Set("AccentSelectBrush", "#2BD97757");
-            Set("AccentSelectHoverBrush", "#3AD97757");
-            Set("AccentFocusBrush", "#33D97757");
-            Set("AccentCrumbHoverBrush", "#26D97757");
-            Set("AccentDropHighlightBrush", "#40D97757");
-            Set("AccentDropBorderBrush", "#B3D97757");
+            Set("AccentBrush", "#D0715A");
+            Set("AccentSelectBrush", "#2BD0715A");
+            Set("AccentSelectHoverBrush", "#3AD0715A");
+            Set("AccentFocusBrush", "#33D0715A");
+            Set("AccentCrumbHoverBrush", "#26D0715A");
+            Set("AccentDropHighlightBrush", "#40D0715A");
+            Set("AccentDropBorderBrush", "#B3D0715A");
             Set("DropCopyAccentBrush", "#7BC49A");
             Set("DropCopyTintBrush", "#337BC49A");
             Set("DropMoveAccentBrush", "#7FB2E5");
@@ -282,17 +286,18 @@ public partial class App : Application
             SetShadow("MenuShadow", "#FFFFFF", 0.16, 16, 1);
             SetShadow("CardShadowBelow", "#FFFFFF", 0.10, 8, 1);
             SetShadow("SubtleShadow", "#FFFFFF", 0.09, 9, 1);
+            r["PaperTextureBrush"] = MakePaperTexture(Colors.White, mottle: 3, fine: 2.5, seed: 7);
         }
         else
         {
             // ライト (App.xaml の既定値と同じ)
-            Set("AccentBrush", "#C96442");
-            Set("AccentSelectBrush", "#19C96442");
-            Set("AccentSelectHoverBrush", "#24C96442");
-            Set("AccentFocusBrush", "#1EC96442");
-            Set("AccentCrumbHoverBrush", "#15C96442");
-            Set("AccentDropHighlightBrush", "#2EC96442");
-            Set("AccentDropBorderBrush", "#99C96442");
+            Set("AccentBrush", "#B4513A");
+            Set("AccentSelectBrush", "#1AB4513A");
+            Set("AccentSelectHoverBrush", "#26B4513A");
+            Set("AccentFocusBrush", "#1EB4513A");
+            Set("AccentCrumbHoverBrush", "#15B4513A");
+            Set("AccentDropHighlightBrush", "#2EB4513A");
+            Set("AccentDropBorderBrush", "#99B4513A");
             Set("DropCopyAccentBrush", "#2E7D50");
             Set("DropCopyTintBrush", "#1F2E7D50");
             Set("DropMoveAccentBrush", "#2B6CB0");
@@ -303,7 +308,7 @@ public partial class App : Application
             Set("CaptionBarMergeBrush", "#E8CEBF");
             Set("BorderSoftBrush", "#ECE7DD");
             Set("WindowOuterBorderBrush", "#E3DCCF");
-            Set("TextPrimaryBrush", "#2B2A27");
+            Set("TextPrimaryBrush", "#2A2622");
             Set("TextSecondaryBrush", "#8A8474");
             Set("TextTertiaryBrush", "#B6AFA0");
             Set("HoverOverlayBrush", "#12000000");
@@ -316,9 +321,74 @@ public partial class App : Application
             Set("ScrollThumbHoverBrush", "#55000000");
             SetShadow("SoftShadow", "#000000", 0.08, 12, 1);
             SetShadow("MenuShadow", "#000000", 0.14, 16, 2);
-            SetShadow("CardShadowBelow", "#000000", 0.07, 6, 2);
+            SetShadow("CardShadowBelow", "#3A2A18", 0.14, 3, 1.2);
             SetShadow("SubtleShadow", "#000000", 0.05, 9, 1);
+            r["PaperTextureBrush"] = MakePaperTexture(Color.FromRgb(0x6B, 0x4E, 0x2A), mottle: 4.5, fine: 2.5, seed: 7);
         }
+    }
+
+    /// <summary>紙の地合い (ごく薄い雲状のムラ + 細かな粒) のタイル画像を作る。
+    /// 目で「模様」と分かる濃さにはしない — 言われて初めて気づく程度でベタ塗り感だけを消す。
+    /// 起動時・テーマ切替時に一度作るだけで、描画はタイル貼りのみ。</summary>
+    /// <param name="ink">ムラの色 (明るい面には暗い色、暗い面には明るい色)。</param>
+    /// <param name="mottle">雲状のムラの最大不透明度 (0-255)。</param>
+    /// <param name="fine">細かな粒の最大不透明度 (0-255)。</param>
+    private static ImageBrush MakePaperTexture(Color ink, double mottle, double fine, int seed)
+    {
+        const int size = 256;
+        var rng = new Random(seed);
+        // 2 オクターブの値ノイズ。格子を折り返して継ぎ目なくタイルできるようにする
+        double[] Lattice(int cells)
+        {
+            var v = new double[cells * cells];
+            for (var i = 0; i < v.Length; i++)
+                v[i] = rng.NextDouble();
+            return v;
+        }
+        static double Smooth(double t) => t * t * (3 - 2 * t);
+        static double Sample(double[] lattice, int cells, int x, int y)
+        {
+            var fx = (double)x * cells / size;
+            var fy = (double)y * cells / size;
+            int x0 = (int)fx, y0 = (int)fy;
+            double tx = Smooth(fx - x0), ty = Smooth(fy - y0);
+            double At(int cx, int cy) => lattice[(cy % cells) * cells + (cx % cells)];
+            var top = At(x0, y0) + (At(x0 + 1, y0) - At(x0, y0)) * tx;
+            var bottom = At(x0, y0 + 1) + (At(x0 + 1, y0 + 1) - At(x0, y0 + 1)) * tx;
+            return top + (bottom - top) * ty;
+        }
+        var coarse = Lattice(6);
+        var medium = Lattice(24);
+        var pixels = new byte[size * size * 4];
+        for (var y = 0; y < size; y++)
+        {
+            for (var x = 0; x < size; x++)
+            {
+                var cloud = Sample(coarse, 6, x, y) * 0.6 + Sample(medium, 24, x, y) * 0.4;
+                var grain = rng.NextDouble();
+                var a = (byte)Math.Clamp((int)Math.Round(cloud * mottle + grain * grain * fine), 0, 255);
+                var i = (y * size + x) * 4;
+                // Pbgra32 は乗算済みアルファ
+                pixels[i + 0] = (byte)(ink.B * a / 255);
+                pixels[i + 1] = (byte)(ink.G * a / 255);
+                pixels[i + 2] = (byte)(ink.R * a / 255);
+                pixels[i + 3] = a;
+            }
+        }
+        var bitmap = System.Windows.Media.Imaging.BitmapSource.Create(
+            size, size, 96, 96, PixelFormats.Pbgra32, null, pixels, size * 4);
+        bitmap.Freeze();
+        var brush = new ImageBrush(bitmap)
+        {
+            TileMode = TileMode.Tile,
+            Stretch = Stretch.None,
+            ViewportUnits = BrushMappingMode.Absolute,
+            Viewport = new Rect(0, 0, size, size),
+            AlignmentX = AlignmentX.Left,
+            AlignmentY = AlignmentY.Top,
+        };
+        brush.Freeze();
+        return brush;
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

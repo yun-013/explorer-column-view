@@ -498,6 +498,10 @@ public class ColumnModel : ObservableObject, IDisposable
     /// 数値だけ控えて戻ったときに復元する (表示そのものは保持しないのでメモリは増えない)。</summary>
     public double ScrollOffset { get; set; }
 
+    /// <summary>表示が一度作られたか。タブ切替で表示が作り直されても、
+    /// 「置く」アニメーションは列が新しく開いた最初の 1 回だけにするための印。</summary>
+    public bool HasAppeared { get; set; }
+
     // ---- 列幅 (最終列だけファイル名に合わせて自動調整) ----
 
     /// <summary>最終列 (最右) かどうか。TabModel が列の増減時に割り当てる。</summary>

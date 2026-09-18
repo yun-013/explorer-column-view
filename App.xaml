@@ -3,14 +3,14 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:ColumnView">
     <Application.Resources>
-        <!-- ==== カラーパレット (Claude 風の温かみ×テラコッタアクセント) ==== -->
-        <SolidColorBrush x:Key="AccentBrush" Color="#C96442"/>
-        <SolidColorBrush x:Key="AccentSelectBrush" Color="#19C96442"/>
-        <SolidColorBrush x:Key="AccentSelectHoverBrush" Color="#24C96442"/>
-        <SolidColorBrush x:Key="AccentFocusBrush" Color="#1EC96442"/>
-        <SolidColorBrush x:Key="AccentCrumbHoverBrush" Color="#15C96442"/>
-        <SolidColorBrush x:Key="AccentDropHighlightBrush" Color="#2EC96442"/>
-        <SolidColorBrush x:Key="AccentDropBorderBrush" Color="#99C96442"/>
+        <!-- ==== カラーパレット (Claude 風の温かみ×朱肉寄りのテラコッタアクセント) ==== -->
+        <SolidColorBrush x:Key="AccentBrush" Color="#B4513A"/>
+        <SolidColorBrush x:Key="AccentSelectBrush" Color="#1AB4513A"/>
+        <SolidColorBrush x:Key="AccentSelectHoverBrush" Color="#26B4513A"/>
+        <SolidColorBrush x:Key="AccentFocusBrush" Color="#1EB4513A"/>
+        <SolidColorBrush x:Key="AccentCrumbHoverBrush" Color="#15B4513A"/>
+        <SolidColorBrush x:Key="AccentDropHighlightBrush" Color="#2EB4513A"/>
+        <SolidColorBrush x:Key="AccentDropBorderBrush" Color="#99B4513A"/>
 
         <!-- ドラッグ中のゴーストが「今ドロップしたら何が起きるか」を示す色。
              Copy = 緑 (元が残る)、Move = 青 (元が消える)。操作が未確定のときは
@@ -29,7 +29,7 @@
         <SolidColorBrush x:Key="BorderSoftBrush" Color="#ECE7DD"/>
         <SolidColorBrush x:Key="WindowOuterBorderBrush" Color="#E3DCCF"/>
 
-        <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2B2A27"/>
+        <SolidColorBrush x:Key="TextPrimaryBrush" Color="#2A2622"/>
         <SolidColorBrush x:Key="TextSecondaryBrush" Color="#8A8474"/>
         <SolidColorBrush x:Key="TextTertiaryBrush" Color="#B6AFA0"/>
 
@@ -46,12 +46,16 @@
         <DropShadowEffect x:Key="SoftShadow" Color="#000000" Opacity="0.08" BlurRadius="12" ShadowDepth="1" Direction="270"/>
         <DropShadowEffect x:Key="MenuShadow" Color="#000000" Opacity="0.14" BlurRadius="16" ShadowDepth="2" Direction="270"/>
         <!-- 上に滲まないタイトな影 (タブ直下のツールバー用。ブラーが上の帯に掛かると線に見えるため) -->
-        <DropShadowEffect x:Key="CardShadowBelow" Color="#000000" Opacity="0.07" BlurRadius="6" ShadowDepth="2" Direction="270"/>
+        <DropShadowEffect x:Key="CardShadowBelow" Color="#3A2A18" Opacity="0.14" BlurRadius="3" ShadowDepth="1.2" Direction="270"/>
         <!-- さらに控えめな影 (カードの上に載る入力欄など、二重に影が掛かる場所用) -->
         <DropShadowEffect x:Key="SubtleShadow" Color="#000000" Opacity="0.05" BlurRadius="9" ShadowDepth="1" Direction="270"/>
 
         <!-- アイコン: Win11 の丸みのある Segoe Fluent Icons (無い環境は MDL2 にフォールバック) -->
         <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
+
+        <!-- 件数・サイズ・日付など数字の多い表示だけに使う、活版印刷の滲みを再現したゴシック
+             (本文はシステムフォント連動のまま。未インストールならあおとゴシックに落ちる) -->
+        <FontFamily x:Key="FigureFont">A P-OTF A1Gothic Std, A P-OTF Aoto Gothic StdN</FontFamily>
 
         <!-- スリムな角丸スクロールバー (矢印なし・普段は細く、ホバーで少し太く) -->
         <Style TargetType="ScrollBar">
@@ -134,6 +138,10 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
                         <Grid>
+                            <!-- ホバーの下地: インクが紙に染みるように、切り替えずに不透明度をじわっと上げる。
+                                 動くのはマウスが出入りした行の不透明度 1 つだけ (0.1 秒程度) なので軽い -->
+                            <Border x:Name="Hover" Background="{DynamicResource RowHoverBrush}" CornerRadius="8"
+                                    Opacity="0" IsHitTestVisible="False"/>
                             <Border x:Name="Bd"
                                     Background="{TemplateBinding Background}"
                                     CornerRadius="8"
@@ -149,11 +157,28 @@
                         </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RowHoverBrush}"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity"
+                                                             To="1" Duration="0:0:0.12"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="Hover" Storyboard.TargetProperty="Opacity"
+                                                             To="0" Duration="0:0:0.18"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSelectBrush}"/>
                                 <Setter TargetName="Pill" Property="Visibility" Value="Visible"/>
+                                <!-- 選択中のホバーは下の MultiTrigger の色で表す (下地を重ねると濁るため隠す) -->
+                                <Setter TargetName="Hover" Property="Visibility" Value="Collapsed"/>
                             </Trigger>
                             <MultiTrigger>
                                 <MultiTrigger.Conditions>

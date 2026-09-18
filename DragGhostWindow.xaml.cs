@@ -47,9 +47,31 @@ public partial class DragGhostWindow : Window
     /// <summary>同 (右下)。カード実寸 = ウィンドウ実寸 − これら。</summary>
     private const double PadRight = 14, PadBottom = 14;
 
+    /// <summary>つまみ上げたときの傾き (度)。大きいと文字が読みにくくなるので控えめに。</summary>
+    private const double PickUpAngle = -2;
+
     public DragGhostWindow()
     {
         InitializeComponent();
+        // ウィンドウはドラッグのたびに使い回すので、表示されるたびに傾きを付け直す
+        IsVisibleChanged += (_, e) =>
+        {
+            if (e.NewValue is true)
+                PlayPickUp();
+        };
+    }
+
+    /// <summary>紙をつまみ上げたように、水平からわずかに傾ける (約 0.3 秒)。</summary>
+    private void PlayPickUp()
+    {
+        var tilt = new System.Windows.Media.Animation.DoubleAnimation(0, PickUpAngle, TimeSpan.FromMilliseconds(300))
+        {
+            EasingFunction = new System.Windows.Media.Animation.CubicEase
+            {
+                EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut,
+            },
+        };
+        Tilt.BeginAnimation(RotateTransform.AngleProperty, tilt);
     }
 
     protected override void OnSourceInitialized(EventArgs e)

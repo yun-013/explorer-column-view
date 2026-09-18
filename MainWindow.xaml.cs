@@ -58,7 +58,10 @@ public partial class MainWindow : Window
         _vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainViewModel.ActiveTab))
+            {
+                _tabSwitchedAt = DateTime.Now;
                 RequestColumnRefocus();
+            }
         };
         // ユーザーが自分でクリックした後は、遅れて開いた列にフォーカスを奪い返さない
         AddHandler(PreviewMouseDownEvent, new MouseButtonEventHandler((_, _) => _refocusColumns = false), true);
@@ -1272,7 +1275,57 @@ public partial class MainWindow : Window
     }
 
     private void Column_Loaded(object sender, RoutedEventArgs e)
-        => (sender as FrameworkElement)?.BringIntoView();
+    {
+        if (sender is not FrameworkElement element)
+            return;
+        element.BringIntoView();
+        if (element.DataContext is ColumnModel { HasAppeared: false } column)
+        {
+            column.HasAppeared = true;
+            PlayColumnAppear(element);
+        }
+    }
+
+    // ---- 新しい列の「置く」アニメーション ----
+    // 紙を机に置くように、わずかに上からふっと現れて沈む (約 0.2 秒)。
+    // 毎クリックで起きるので、もたつきに感じないよう短く小さく、次の場合は出さない:
+    //  - 起動直後 (セッション復元で全列が一斉に動くのを避ける)
+    //  - キーボードで素早く移動中 (矢印キーの連打に追従させる)
+
+    private const double ColumnAppearMs = 200;
+    private const double ColumnAppearDrop = 4;
+
+    /// <summary>最後にキーが押された時刻 (キー操作中は列のアニメーションを省く)。</summary>
+    private DateTime _lastKeyDown = DateTime.MinValue;
+
+    /// <summary>起動からしばらくは列のアニメーションを出さない。</summary>
+    private readonly DateTime _createdAt = DateTime.Now;
+
+    /// <summary>タブ切替の直後も出さない (初めて開くタブで全列が一斉に動くのを避ける)。</summary>
+    private DateTime _tabSwitchedAt = DateTime.MinValue;
+
+    private void PlayColumnAppear(FrameworkElement element)
+    {
+        var now = DateTime.Now;
+        if (now - _createdAt < TimeSpan.FromSeconds(1.5)
+            || now - _lastKeyDown < TimeSpan.FromMilliseconds(400)
+            || now - _tabSwitchedAt < TimeSpan.FromMilliseconds(500))
+            return;
+        var duration = TimeSpan.FromMilliseconds(ColumnAppearMs);
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var shift = new TranslateTransform(0, -ColumnAppearDrop);
+        element.RenderTransform = shift;
+        var fade = new DoubleAnimation(0, 1, duration) { EasingFunction = ease };
+        var drop = new DoubleAnimation(-ColumnAppearDrop, 0, duration) { EasingFunction = ease };
+        // 終わったら素の状態に戻す (アニメーションの値を残さない)
+        fade.Completed += (_, _) =>
+        {
+            element.BeginAnimation(OpacityProperty, null);
+            element.RenderTransform = Transform.Identity;
+        };
+        element.BeginAnimation(OpacityProperty, fade);
+        shift.BeginAnimation(TranslateTransform.YProperty, drop);
+    }
 
     // ---- タブ切替時の縦スクロール位置の保持 ----
     // 保持するのは列ごとの数値 1 つだけ。非アクティブなタブの表示 (ListBox) を
@@ -2202,6 +2255,7 @@ public partial class MainWindow : Window
 
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        _lastKeyDown = DateTime.Now;
         // キー操作が始まったら、列の読み込み完了時のフォーカス戻しは打ち切る
         // (Ctrl+Tab ならこの後の CycleTab で改めて予約される)
         _refocusColumns = false;
