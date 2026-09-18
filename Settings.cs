@@ -89,8 +89,14 @@ public class AppSettings
     /// <summary>最後に閉じたウィンドウの位置・大きさ (null = 未保存。既定の大きさで開く)。</summary>
     public SavedWindowPlacement? WindowPlacement { get; set; }
 
+    /// <summary>開発用: 環境変数 COLUMNVIEW_PROFILE_DIR があれば設定をそこに置く
+    /// (常用版のセッションを上書きせずに試作ビルドを並行起動するため。App の単一インスタンス判定もスキップされる)。</summary>
+    public static string? DevProfileDir =>
+        Environment.GetEnvironmentVariable("COLUMNVIEW_PROFILE_DIR") is { Length: > 0 } dir ? dir : null;
+
     private static readonly string FilePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ColumnView", "settings.json");
+        DevProfileDir ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ColumnView"),
+        "settings.json");
 
     private static readonly JsonSerializerOptions Options = new()
     {

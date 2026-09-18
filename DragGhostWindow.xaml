@@ -15,7 +15,12 @@
         FontSize="12">
     <!-- 外周の余白: バッジ (右上へ 8px はみ出す) と重なりカード (右下へ 8px ずれる) の逃げ場。
          これが無いと SizeToContent のウィンドウ境界でクリップされて欠ける -->
-    <Grid Margin="10,10,14,14">
+    <!-- 紙をつまみ上げたように、表示されるたびに少しだけ傾く (DragGhostWindow.PlayPickUp)。
+         RenderTransform なので配置計算 (掴み位置) には影響しない。傾きで角が動く分は外周の余白に収まる -->
+    <Grid Margin="10,10,14,14" RenderTransformOrigin="0.5,0.5">
+        <Grid.RenderTransform>
+            <RotateTransform x:Name="Tilt" Angle="0"/>
+        </Grid.RenderTransform>
         <!-- 複数選択時: 後ろに重なって見えるカード (奥から手前へ) -->
         <Border x:Name="Stack2"
                 Background="{DynamicResource SurfaceBrush}"
