@@ -15,6 +15,10 @@ public partial class MainWindow : Window
     /// 「フォルダーを開く」要求 (単一インスタンス) の届け先になる。</summary>
     public static MainWindow? LastActivated { get; private set; }
 
+    /// <summary>表示時に前回終了時の位置・大きさを復元するか (起動時のウィンドウのみ true)。
+    /// Ctrl+N やタブの引き剝がしで開くウィンドウは従来どおり OS の既定位置に任せる。</summary>
+    public bool RestorePlacement { get; init; }
+
     public MainWindow() : this(new MainViewModel()) { }
 
     public MainWindow(MainViewModel vm)
@@ -296,6 +300,13 @@ public partial class MainWindow : Window
         // ネットワーク復帰 (Wi-Fi 再接続・ケーブル挿し直し等) で NAS を繋ぎ直す
         System.Net.NetworkInformation.NetworkChange.NetworkAddressChanged += OnNetworkAddressChanged;
         HwndSource.FromHwnd(hwnd)?.AddHook(ClipboardWndProc);
+
+        // 起動時のウィンドウだけ前回終了時の位置・大きさで開く (表示前なのでちらつかない)
+        if (RestorePlacement && AppSettings.Current.WindowPlacement is { } placement)
+        {
+            WindowPlacementStore.Apply(this, placement);
+            Window_StateChanged(this, EventArgs.Empty); // 表示前の最大化では StateChanged が来ないことがある
+        }
 
         // Win11 の DWM にウィンドウ自体を角丸にしてもらう
         // (標準枠を消しているため四隅が黒く残らないように)。Win10 では失敗しても無害
@@ -2349,7 +2360,12 @@ public partial class MainWindow : Window
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
         if (Application.Current.Windows.OfType<MainWindow>().Count() == 1)
+        {
+            // 位置・大きさは SaveSession 内の Save でまとめて書き出す
+            if (WindowPlacementStore.Capture(this) is { } placement)
+                AppSettings.Current.WindowPlacement = placement;
             _vm.SaveSession();
+        }
         base.OnClosing(e);
     }
 
