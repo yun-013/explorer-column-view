@@ -25,7 +25,11 @@ public partial class MainWindow : Window
         DataContext = _vm;
         _vm.TabsEmptied += OnTabsEmptied;
 
-        Activated += (_, _) => LastActivated = this;
+        Activated += (_, _) =>
+        {
+            LastActivated = this;
+            OnActivatedRestoreFocus();
+        };
         Closed += (_, _) => { if (LastActivated == this) LastActivated = null; };
 
         // パンくずが長いときは先頭ではなく末尾 (現在地) を見せる
@@ -43,6 +47,17 @@ public partial class MainWindow : Window
         // タブ切替で列の表示が作り直されても、各列の縦スクロール位置を引き継ぐ
         // (復元は列の ListBox の Loaded = ColumnList_Loaded で行う)
         _vm.ActiveTabChanging += SaveColumnScroll;
+
+        // タブ切替で列の表示が作り直されると、キーボードフォーカスの居場所 (旧タブの列) が消える。
+        // 選択の見た目はモデルから戻るのに、Space / Ctrl+C などが列に届かなくなるので、
+        // 作り直された列にフォーカスを戻す (ColumnList_Loaded で実施)
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.ActiveTab))
+                RequestColumnRefocus();
+        };
+        // ユーザーが自分でクリックした後は、遅れて開いた列にフォーカスを奪い返さない
+        AddHandler(PreviewMouseDownEvent, new MouseButtonEventHandler((_, _) => _refocusColumns = false), true);
     }
 
     /// <summary>別プロセス (フォルダーのダブルクリックや Win+E) から渡されたフォルダーを
@@ -542,9 +557,17 @@ public partial class MainWindow : Window
 
     private void TabStrip_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
+        // タブをクリックしたら (並べ替え・切り離し・閉じるボタンを除く)、入力先はそのタブの一覧へ。
+        // 既に表示中のタブをクリックしたときは切替が起きず列も作り直されないので、ここで戻す
+        // (別のタブなら切替に伴う予約でも戻るが、重ねて呼んでも害は無い)
+        var clicked = !_reordering && _tabDragModel is { } t && t == _vm.ActiveTab
+            && FindAncestor<Button>(e.OriginalSource as DependencyObject) is null;
         EndReorderVisual();
         _tabDragModel = null;
         _reordering = false;
+        if (clicked)
+            Dispatcher.BeginInvoke(new Action(FocusSelectionColumn),
+                System.Windows.Threading.DispatcherPriority.Input);
     }
 
     private ListBoxItem? TabContainer(TabModel? t)
@@ -1134,6 +1157,17 @@ public partial class MainWindow : Window
         var selected = listBox.SelectedItem as FileSystemItem;
         var ctrl = Keyboard.Modifiers == ModifierKeys.Control;
 
+        // 列そのものにフォーカスがある (タブ切替などで戻した直後、選択行が画面外で行の表示が
+        // まだ無い) ときに ↑↓ を押すと、ListBox は先頭行から動き出してしまう。
+        // 押された時点で選択行を表示してそこへフォーカスを移し、選択行から動くようにする
+        if (e.Key is Key.Up or Key.Down or Key.PageUp or Key.PageDown
+            && listBox.IsKeyboardFocused && listBox.SelectedItem is { } current)
+        {
+            listBox.ScrollIntoView(current);
+            listBox.UpdateLayout();
+            (listBox.ItemContainerGenerator.ContainerFromItem(current) as ListBoxItem)?.Focus();
+        }
+
         switch (e.Key)
         {
             case Key.C when ctrl:
@@ -1243,6 +1277,8 @@ public partial class MainWindow : Window
     /// (タブを別ウィンドウへ移したときなどに古い位置へ飛ばないように)。</summary>
     private void ColumnList_Loaded(object sender, RoutedEventArgs e)
     {
+        if (_refocusColumns)
+            ScheduleColumnRefocus();
         if (sender is ListBox { DataContext: ColumnModel { ScrollOffset: > 0 } column } lb
             && FindDescendant<ScrollViewer>(lb) is { } sv)
         {
@@ -2106,6 +2142,10 @@ public partial class MainWindow : Window
 
     private async void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        // キー操作が始まったら、列の読み込み完了時のフォーカス戻しは打ち切る
+        // (Ctrl+Tab ならこの後の CycleTab で改めて予約される)
+        _refocusColumns = false;
+
         // プレビューが開いている間はフォーカスがどこにあっても Space / Esc で閉じる。
         // 他アプリから戻った直後は列 (ListBox) にフォーカスが無いことがあり、
         // 列のハンドラーだけに頼ると「キーが効かない」ように見えるため
@@ -2300,6 +2340,63 @@ public partial class MainWindow : Window
         => listBox.DataContext is ColumnModel column && _vm.ActiveTab is { } tab
             ? tab.Columns.IndexOf(column)
             : -1;
+
+    // ---- 列へのキーボードフォーカスの復帰 ----
+    // 列のキー操作 (Space でプレビュー / Ctrl+C / ↑↓ など) は列の ListBox にフォーカスがあるときだけ効く。
+    // タブ切替では列の表示が作り直されてフォーカスの居場所が消え、他アプリから戻ったときも
+    // 居場所が無いままになるため、見た目は選択中なのにキーが効かない状態になっていた。
+    // 切替・アクティブ化のときにだけ動くので、常時の負荷は無い。
+
+    /// <summary>次に列が読み込まれたとき、選択中の列へフォーカスを戻すよう予約する。
+    /// セッション復元直後のタブは列が 1 本ずつ遅れて開くので、ユーザーが操作するまで予約を残す。</summary>
+    private bool _refocusColumns;
+    private bool _refocusQueued;
+
+    private void RequestColumnRefocus()
+    {
+        // パス入力欄・名前変更などの文字入力中はそちらを優先する
+        if (Keyboard.FocusedElement is TextBox)
+            return;
+        // Tab キーでタブ列に入り、←→ でタブを選んでいる最中はタブ列に留める
+        // (Ctrl+Tab での切替やクリックは一覧へ移す)
+        if (TabStrip.IsKeyboardFocusWithin
+            && InputManager.Current.MostRecentInputDevice is KeyboardDevice
+            && Keyboard.Modifiers != ModifierKeys.Control
+            && Keyboard.Modifiers != (ModifierKeys.Control | ModifierKeys.Shift))
+            return;
+        _refocusColumns = true;
+    }
+
+    /// <summary>列が続けて読み込まれても 1 回にまとめ、レイアウト後 (項目のコンテナができた後) に戻す。</summary>
+    private void ScheduleColumnRefocus()
+    {
+        if (_refocusQueued)
+            return;
+        _refocusQueued = true;
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            _refocusQueued = false;
+            // 非アクティブなウィンドウでフォーカスを動かすと、同じスレッドの別ウィンドウから
+            // アクティブを奪いかねない。予約は残し、アクティブになったとき (Activated) に戻す
+            if (!_refocusColumns || !IsActive || Keyboard.FocusedElement is TextBox)
+                return;
+            FocusSelectionColumn();
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    /// <summary>他アプリから戻ったとき: 予約があるか、フォーカスの居場所が無い (列が作り直された等) なら
+    /// 選択中の列へ戻す。ボタンや入力欄など、どこかに居場所があるときは触らない。</summary>
+    private void OnActivatedRestoreFocus()
+    {
+        // OS からのフォーカス復元が済んでから判定する
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (!IsActive || Keyboard.FocusedElement is TextBox)
+                return;
+            if (_refocusColumns || Keyboard.FocusedElement is null or Window)
+                FocusSelectionColumn();
+        }), System.Windows.Threading.DispatcherPriority.Input);
+    }
 
     /// <summary>選択中の項目がある列 (無ければ最後の列) にキーボードフォーカスを戻す。
     /// プレビューを閉じた直後や他アプリから戻った直後に呼び、Space / ↑↓ を
