@@ -181,6 +181,8 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // コピー直後に終了してもクリップボードの中身が消えないように
+        ClipboardOps.FlushOnExit();
         base.OnExit(e);
         // 終了保険: メディア基盤 (MF) やシェル拡張・WinRT が残したスレッドが
         // プロセスを生かし続けると「ウィンドウは無いのに exe がロックされたまま」になる。

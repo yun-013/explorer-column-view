@@ -1,5 +1,8 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Threading;
+using IComDataObject = System.Runtime.InteropServices.ComTypes.IDataObject;
 
 namespace ColumnView;
 
@@ -25,14 +28,166 @@ public static class ClipboardOps
         data.SetFileDropList(list);
         data.SetData(PreferredDropEffect,
             new MemoryStream(BitConverter.GetBytes(cut ? DropEffectMove : DropEffectCopy)));
+        return SetData(data);
+    }
+
+    /// <summary>テキストをクリップボードへ載せる (パスのコピー用)。</summary>
+    public static bool SetText(string text)
+        => SetData(new DataObject(DataFormats.UnicodeText, text));
+
+    // ---- 載せる / フラッシュ ----
+    //
+    // WPF の Clipboard.SetDataObject(data, copy: true) は OleSetClipboard の直後に
+    // OleFlushClipboard を呼び、失敗すると Thread.Sleep(100) で最大 10 回再試行する。
+    // ところが OleSetClipboard 直後はクリップボード監視アプリ (履歴・Seer 等) が
+    // 中身を読みに来て、遅延レンダリングの WM_RENDERFORMAT を「このスレッド」に
+    // SendMessage してくる。Sleep 中はそれを処理できないので相手はクリップボードを
+    // 開いたまま待ち、こちらは開けずに待つ → 1 秒後に例外、という膠着が頻発していた
+    // (しかもデータ自体はすでに載っているのに失敗扱いになる)。
+    // そこで OLE を直接呼び、待つ間は送られてきたメッセージを処理し、
+    // フラッシュは同期で粘らずディスパッチャーで後から行う。
+
+    [DllImport("ole32.dll")]
+    private static extern int OleSetClipboard(IComDataObject? pDataObj);
+
+    [DllImport("ole32.dll")]
+    private static extern int OleFlushClipboard();
+
+    [DllImport("ole32.dll")]
+    private static extern int OleIsCurrentClipboard(IComDataObject pDataObj);
+
+    [DllImport("user32.dll")]
+    private static extern uint MsgWaitForMultipleObjectsEx(uint nCount, nint pHandles, uint dwMilliseconds, uint dwWakeMask, uint dwFlags);
+
+    [DllImport("user32.dll")]
+    private static extern bool PeekMessage(out MSG lpMsg, nint hWnd, uint wMsgFilterMin, uint wMsgFilterMax, uint wRemoveMsg);
+
+    [DllImport("user32.dll")]
+    private static extern nint GetOpenClipboardWindow();
+
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint hWnd, out uint processId);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MSG
+    {
+        public nint hwnd;
+        public uint message;
+        public nint wParam;
+        public nint lParam;
+        public uint time;
+        public int ptX;
+        public int ptY;
+    }
+
+    private const uint QS_SENDMESSAGE = 0x0040;
+    private const uint PM_QS_SENDMESSAGE = QS_SENDMESSAGE << 16; // PM_NOREMOVE | 送信メッセージのみ処理
+
+    /// <summary>OleSetClipboard 済みでまだフラッシュしていないデータ (遅延レンダリング中)。</summary>
+    private static DataObject? _pending;
+    private static DispatcherTimer? _flushTimer;
+    private static int _flushTries;
+
+    /// <summary>直近の失敗時にクリップボードを開いていたプロセス名 (分かれば)。</summary>
+    public static string? LastBlocker { get; private set; }
+
+    private static bool SetData(DataObject data)
+    {
+        LastBlocker = null;
+        if (!Retry(() => OleSetClipboard(data), 1500))
+        {
+            LastBlocker = FindBlocker();
+            return false;
+        }
+
+        // 載った。実データ化 (フラッシュ) は一度だけ試し、ダメなら後で
+        _pending = data;
+        if (OleFlushClipboard() >= 0)
+            _pending = null;
+        else
+            ScheduleFlush();
+        return true;
+    }
+
+    /// <summary>
+    /// op が成功するまで再試行する。待つ間は他プロセスから送られたメッセージ
+    /// (遅延レンダリング要求など) を処理し、相手を待たせっぱなしにしない。
+    /// </summary>
+    private static bool Retry(Func<int> op, int timeoutMs)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            if (op() >= 0)
+                return true;
+            if (sw.ElapsedMilliseconds >= timeoutMs)
+                return false;
+            MsgWaitForMultipleObjectsEx(0, 0, 20, QS_SENDMESSAGE, 0);
+            PeekMessage(out _, 0, 0, 0, PM_QS_SENDMESSAGE);
+        }
+    }
+
+    private static void ScheduleFlush()
+    {
+        _flushTries = 0;
+        if (_flushTimer is null)
+        {
+            _flushTimer = new DispatcherTimer(DispatcherPriority.Background)
+            {
+                Interval = TimeSpan.FromMilliseconds(150),
+            };
+            _flushTimer.Tick += (_, _) =>
+            {
+                if (TryFlushPending() || ++_flushTries >= 40)
+                    _flushTimer.Stop();
+            };
+        }
+        _flushTimer.Stop();
+        _flushTimer.Start();
+    }
+
+    /// <summary>保留中のデータをフラッシュする。もう不要 (完了 / 他アプリが上書き) なら true。</summary>
+    private static bool TryFlushPending()
+    {
+        if (_pending is null)
+            return true;
+        if (OleIsCurrentClipboard(_pending) != 0) // S_FALSE = もう自分の中身ではない
+        {
+            _pending = null;
+            return true;
+        }
+        if (OleFlushClipboard() < 0)
+            return false;
+        _pending = null;
+        return true;
+    }
+
+    /// <summary>
+    /// 終了時に呼ぶ。フラッシュしないままプロセスが消えると、
+    /// コピーした内容がクリップボードから失われる。
+    /// </summary>
+    public static void FlushOnExit()
+    {
+        _flushTimer?.Stop();
+        if (_pending is null)
+            return;
+        Retry(() => TryFlushPending() ? 0 : -1, 1000);
+    }
+
+    private static string? FindBlocker()
+    {
         try
         {
-            Clipboard.SetDataObject(data, true);
-            return true;
+            var hwnd = GetOpenClipboardWindow();
+            if (hwnd == 0)
+                return null;
+            GetWindowThreadProcessId(hwnd, out var pid);
+            using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+            return p.ProcessName;
         }
         catch
         {
-            return false; // クリップボードが他プロセスに占有されている
+            return null;
         }
     }
 
@@ -66,14 +221,10 @@ public static class ClipboardOps
     /// <summary>切り取りの貼り付け後に呼ぶ (二度目の移動は元ファイルが無く失敗するため)。</summary>
     public static void ClearAfterMove()
     {
-        try
-        {
-            Clipboard.Clear();
-        }
-        catch
-        {
-            // 占有中なら無視 (次の貼り付けが失敗するだけ)
-        }
+        _pending = null;
+        _flushTimer?.Stop();
+        // 占有中で空にできなくても無視 (次の貼り付けが失敗するだけ)
+        Retry(() => OleSetClipboard(null), 500);
     }
 }
 
