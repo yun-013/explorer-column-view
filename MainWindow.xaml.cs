@@ -39,6 +39,14 @@ public partial class MainWindow : Window
 
         // Quick Look が開いている間、選択を変えるとプレビューを追従させる
         _vm.PreviewFollow = FollowQuickLook;
+
+        // タブ切替で列の表示が作り直されても、各列の縦スクロール位置を引き継ぐ
+        _vm.ActiveTabChanging += SaveColumnScroll;
+        _vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(MainViewModel.ActiveTab))
+                ScheduleColumnScrollRestore();
+        };
     }
 
     /// <summary>別プロセス (フォルダーのダブルクリックや Win+E) から渡されたフォルダーを
@@ -1212,6 +1220,59 @@ public partial class MainWindow : Window
 
     private void Column_Loaded(object sender, RoutedEventArgs e)
         => (sender as FrameworkElement)?.BringIntoView();
+
+    // ---- タブ切替時の縦スクロール位置の保持 ----
+    // 保持するのは列ごとの数値 1 つだけ。非アクティブなタブの表示 (ListBox) を
+    // 生かしておく方式はメモリを食うので採らない。切替時にだけ動くので常時の負荷も無い。
+
+    /// <summary>表示の作り直し待ちで、まだ位置を戻していないタブ。
+    /// その間に離れても、未描画の (位置 0 の) 表示で控えを上書きしない。</summary>
+    private TabModel? _scrollRestorePending;
+
+    private void SaveColumnScroll(TabModel leaving)
+    {
+        if (leaving == _scrollRestorePending)
+            return;
+        foreach (var (column, sv) in ColumnScrollViewers())
+        {
+            if (leaving.Columns.Contains(column))
+                column.ScrollOffset = sv.VerticalOffset;
+        }
+    }
+
+    private void ScheduleColumnScrollRestore()
+    {
+        if (_vm.ActiveTab is not { } tab)
+            return;
+        _scrollRestorePending = tab;
+        // 列の ListBox が生成・レイアウトされた後で戻す
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (_scrollRestorePending != tab)
+                return;
+            _scrollRestorePending = null;
+            if (_vm.ActiveTab != tab)
+                return;
+            foreach (var (column, sv) in ColumnScrollViewers())
+            {
+                if (column.ScrollOffset > 0 && tab.Columns.Contains(column))
+                    sv.ScrollToVerticalOffset(column.ScrollOffset);
+            }
+        }), System.Windows.Threading.DispatcherPriority.Loaded);
+    }
+
+    /// <summary>表示中の各列とその ListBox の ScrollViewer。</summary>
+    private IEnumerable<(ColumnModel Column, ScrollViewer Viewer)> ColumnScrollViewers()
+    {
+        var gen = ColumnsHost.ItemContainerGenerator;
+        for (var i = 0; i < ColumnsHost.Items.Count; i++)
+        {
+            if (gen.ContainerFromIndex(i) is FrameworkElement { DataContext: ColumnModel column } container
+                && FindDescendant<ListBox>(container) is { } lb
+                && FindDescendant<ScrollViewer>(lb) is { } sv)
+                yield return (column, sv);
+        }
+    }
 
     /// <summary>最終列の自動幅は項目読み込み後に確定するため、広がった分が画面外へ
     /// はみ出さないよう追従スクロールする。</summary>

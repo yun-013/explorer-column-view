@@ -11,12 +11,18 @@ public class MainViewModel : ObservableObject
 
     public ObservableCollection<TabModel> Tabs { get; } = new();
 
+    /// <summary>アクティブタブが切り替わる直前 (引数は離れるタブ)。
+    /// 画面側がスクロール位置などの表示状態を控えるのに使う。</summary>
+    public event Action<TabModel>? ActiveTabChanging;
+
     private TabModel? _activeTab;
     public TabModel? ActiveTab
     {
         get => _activeTab;
         set
         {
+            if (_activeTab is { } leaving && leaving != value)
+                ActiveTabChanging?.Invoke(leaving);
             if (Set(ref _activeTab, value))
             {
                 if (value?.Pending is not null)

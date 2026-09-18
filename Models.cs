@@ -494,6 +494,10 @@ public class ColumnModel : ObservableObject, IDisposable
         set => Set(ref _error, value);
     }
 
+    /// <summary>タブを離れたときの縦スクロール位置。タブ切替で列の表示が作り直されるため、
+    /// 数値だけ控えて戻ったときに復元する (表示そのものは保持しないのでメモリは増えない)。</summary>
+    public double ScrollOffset { get; set; }
+
     // ---- 列幅 (最終列だけファイル名に合わせて自動調整) ----
 
     /// <summary>最終列 (最右) かどうか。TabModel が列の増減時に割り当てる。</summary>
