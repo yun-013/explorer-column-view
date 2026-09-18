@@ -1,12 +1,11 @@
 using System.IO;
 using System.Runtime.InteropServices;
-using Microsoft.VisualBasic.FileIO;
 
 namespace ColumnView;
 
 /// <summary>
 /// ドロップされたファイル / フォルダの移動・コピー。
-/// Windows 標準の進捗ダイアログと上書き確認 UI (UIOption.AllDialogs) を使うため、
+/// Windows 標準の進捗ダイアログと上書き確認 UI (SHFileOperation) を使うため、
 /// エクスプローラーと同じ操作感になる。
 /// </summary>
 public static class FileOps
@@ -85,23 +84,16 @@ public static class FileOps
                 if (copy && string.Equals(Path.GetFullPath(dest), Path.GetFullPath(trimmed), StringComparison.OrdinalIgnoreCase))
                     dest = UniqueCopyName(targetDir, name, isDir);
 
-                if (copy)
+                if (!ShellTransfer(trimmed, dest, copy, isDir, out var shellError))
                 {
-                    if (isDir) FileSystem.CopyDirectory(src, dest, UIOption.AllDialogs);
-                    else FileSystem.CopyFile(src, dest, UIOption.AllDialogs);
+                    // null = ユーザーがダイアログでキャンセルした
+                    if (shellError is not null)
+                        error = shellError;
+                    continue;
                 }
-                else
-                {
-                    if (isDir) FileSystem.MoveDirectory(src, dest, UIOption.AllDialogs);
-                    else FileSystem.MoveFile(src, dest, UIOption.AllDialogs);
-                    if (parent is not null)
-                        affected.Add(parent);
-                }
+                if (!copy && parent is not null)
+                    affected.Add(parent);
                 performed.Add((trimmed, dest));
-            }
-            catch (OperationCanceledException)
-            {
-                // ユーザーがダイアログでキャンセルした
             }
             catch (Exception ex)
             {
@@ -110,6 +102,66 @@ public static class FileOps
         }
 
         return affected;
+    }
+
+    /// <summary>1 項目を移動する (取り消し用)。false で error=null はユーザーのキャンセル。</summary>
+    public static bool Move(string src, string dest, out string? error)
+        => ShellTransfer(src, dest, copy: false, Directory.Exists(src), out error);
+
+    private const int FO_MOVE = 1;
+    private const int FO_COPY = 2;
+    private const ushort FOF_NOCONFIRMMKDIR = 0x200;
+    private const ushort FOF_NO_CONNECTED_ELEMENTS = 0x2000;
+
+    [DllImport("user32.dll")]
+    private static extern nint GetActiveWindow();
+
+    /// <summary>
+    /// 1 項目を SHFileOperation で移動 / コピーする (進捗・上書き確認はシェル標準 UI)。
+    /// 以前は Microsoft.VisualBasic の FileSystem.CopyFile 等を使っていたが、あれは
+    /// 事前のパス正規化で DirectoryInfo.GetFiles(名前)(0) を「必ず見つかる」前提で読み、
+    /// 同期中のクラウド / NAS などで一覧に一瞬現れないと IndexOutOfRangeException
+    /// (「Index was outside the bounds of the array.」) で失敗していたので、直接呼ぶ。
+    /// 戻り値 false で error=null はユーザーのキャンセル。
+    /// </summary>
+    private static bool ShellTransfer(string src, string dest, bool copy, bool isDir, out string? error)
+    {
+        error = null;
+        var from = src;
+        // フォルダの転送先が既にある場合、シェルは「その中へ」入れてしまうので、
+        // 中身を転送して統合する (VB の FileSystem.CopyDirectory と同じ振る舞い)
+        var merge = isDir && Directory.Exists(dest);
+        if (merge)
+            from = Path.Combine(src, "*");
+
+        var op = new SHFILEOPSTRUCTW
+        {
+            hwnd = GetActiveWindow(),
+            wFunc = copy ? (uint)FO_COPY : FO_MOVE,
+            pFrom = from + "\0\0",
+            pTo = dest + "\0\0",
+            fFlags = FOF_NOCONFIRMMKDIR | FOF_NO_CONNECTED_ELEMENTS,
+        };
+        var result = SHFileOperationW(ref op);
+        if (op.fAnyOperationsAborted)
+            return false;
+        if (result != 0)
+        {
+            error = $"{(copy ? "コピー" : "移動")}できませんでした: {Path.GetFileName(src)} (コード {result})";
+            return false;
+        }
+
+        // 統合移動では中身だけが移るので、空になった元フォルダを片付ける
+        if (merge && !copy)
+        {
+            try
+            {
+                if (Directory.Exists(src) && !Directory.EnumerateFileSystemEntries(src).Any())
+                    Directory.Delete(src);
+            }
+            catch { /* 残っても実害はない */ }
+        }
+        return true;
     }
 
     /// <summary>「名前 - コピー.ext」「名前 - コピー (2).ext」… の空き名を返す。</summary>
