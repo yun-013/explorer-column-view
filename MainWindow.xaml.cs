@@ -469,6 +469,7 @@ public partial class MainWindow : Window
         RootBorder.BorderThickness = maximized ? new Thickness(0) : new Thickness(1);
         // 最大化時は画面いっぱいになるため角丸を解除 (透明な欠けを防ぐ)
         RootBorder.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(10);
+        BodySheet.CornerRadius = maximized ? new CornerRadius(0) : new CornerRadius(0, 0, 9, 9);
         MaxButton.Content = char.ConvertFromUtf32(maximized ? 0xE923 : 0xE922); // 元に戻す / 最大化
     }
 
@@ -836,8 +837,8 @@ public partial class MainWindow : Window
     /// XAML の Background は DynamicResource (= ローカル値) なので、固定色を代入すると
     /// 解除後も元のブラシに戻らずテーマ切り替えも効かなくなる。必ずリソース参照を貼り直す。</summary>
     public void SetMergeHighlight(bool on)
-        => CaptionBar.SetResourceReference(
-            Panel.BackgroundProperty,
+        => RootBorder.SetResourceReference(
+            Border.BackgroundProperty,
             on ? "CaptionBarMergeBrush" : "CaptionBarBrush");
 
     // ---- 並べ替え・お気に入り ----

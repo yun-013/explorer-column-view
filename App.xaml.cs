@@ -236,6 +236,8 @@ public partial class App : Application
             brush.Freeze();
             r[key] = brush;
         }
+        // 光は左上から: 全ての影を右下 (315°) にそろえて落とす
+        const double lightDirection = 315;
         void SetShadow(string key, string hex, double opacity, double blur, double depth)
         {
             var effect = new System.Windows.Media.Effects.DropShadowEffect
@@ -244,18 +246,44 @@ public partial class App : Application
                 Opacity = opacity,
                 BlurRadius = blur,
                 ShadowDepth = depth,
-                Direction = 270,
+                Direction = lightDirection,
             };
             effect.Freeze();
             r[key] = effect;
+        }
+        // 付箋の先端: 左端 tipWidth px だけ色が乗り、その先は透明になる横グラデーション
+        // (行と同じ角丸の面に塗るので、左は角丸・右は真っすぐの端になる)
+        void SetNoteTip(string hex)
+        {
+            const double tipWidth = 4;
+            var color = (Color)ColorConverter.ConvertFromString(hex);
+            var brush = new LinearGradientBrush
+            {
+                MappingMode = BrushMappingMode.Absolute,
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(tipWidth * 2, 0),
+                GradientStops =
+                {
+                    new GradientStop(color, 0), new GradientStop(color, 0.5),
+                    new GradientStop(Colors.Transparent, 0.5), new GradientStop(Colors.Transparent, 1),
+                },
+            };
+            brush.Freeze();
+            r["NoteTipBrush"] = brush;
+        }
+        // 影は用途ごとに分けず、全て同じ「紙の影」にそろえる (キーは参照側の互換のため残す)
+        void SetAllShadows(string hex, double opacity, double blur, double depth)
+        {
+            foreach (var key in new[] { "SoftShadow", "MenuShadow", "CardShadowBelow", "SubtleShadow" })
+                SetShadow(key, hex, opacity, blur, depth);
         }
 
         if (dark)
         {
             // 温かみのあるダーク (Claude のダークモード風の焦げ茶ベース)
             Set("AccentBrush", "#D0715A");
-            Set("AccentSelectBrush", "#2BD0715A");
-            Set("AccentSelectHoverBrush", "#3AD0715A");
+            Set("AccentSelectBrush", "#30E8914E");
+            Set("AccentSelectHoverBrush", "#3FE8914E");
             Set("AccentFocusBrush", "#33D0715A");
             Set("AccentCrumbHoverBrush", "#26D0715A");
             Set("AccentDropHighlightBrush", "#40D0715A");
@@ -281,19 +309,22 @@ public partial class App : Application
             Set("ChipPressedBrush", "#4D4940");
             Set("ScrollThumbBrush", "#40FFFFFF");
             Set("ScrollThumbHoverBrush", "#66FFFFFF");
-            // ダークでは黒い影が見えないため、白いグローで面の重なりを表現する
-            SetShadow("SoftShadow", "#FFFFFF", 0.10, 12, 1);
-            SetShadow("MenuShadow", "#FFFFFF", 0.16, 16, 1);
-            SetShadow("CardShadowBelow", "#FFFFFF", 0.10, 8, 1);
-            SetShadow("SubtleShadow", "#FFFFFF", 0.09, 9, 1);
-            r["PaperTextureBrush"] = MakePaperTexture(Colors.White, mottle: 3, fine: 2.5, seed: 7);
+            // ダークでも光らせず、ライトと同じ形の締まった影を黒で落とす (全ての影で共通)
+            SetAllShadows("#000000", 0.45, 3, 1.5);
+            SetShadow("SheetShadow", "#000000", 0.55, 5, 3);
+            SetShadow("SheetContactShadow", "#000000", 0.40, 3, 0);
+            SetShadow("NoteShadow", "#000000", 0.50, 4, 2.2);
+            r["NoteShadowColor"] = Colors.Black;
+            r["NoteShadowOpacity"] = 0.50;
+            SetNoteTip("#D9E8914E");
+            r["PaperTextureBrush"] = MakePaperTexture(Colors.White, mottle: 4, fine: 3, seed: 7);
         }
         else
         {
             // ライト (App.xaml の既定値と同じ)
             Set("AccentBrush", "#B4513A");
-            Set("AccentSelectBrush", "#1AB4513A");
-            Set("AccentSelectHoverBrush", "#26B4513A");
+            Set("AccentSelectBrush", "#1FD98038");
+            Set("AccentSelectHoverBrush", "#2BD98038");
             Set("AccentFocusBrush", "#1EB4513A");
             Set("AccentCrumbHoverBrush", "#15B4513A");
             Set("AccentDropHighlightBrush", "#2EB4513A");
@@ -319,11 +350,18 @@ public partial class App : Application
             Set("ChipPressedBrush", "#F1ECE2");
             Set("ScrollThumbBrush", "#30000000");
             Set("ScrollThumbHoverBrush", "#55000000");
-            SetShadow("SoftShadow", "#000000", 0.08, 12, 1);
-            SetShadow("MenuShadow", "#000000", 0.14, 16, 2);
-            SetShadow("CardShadowBelow", "#3A2A18", 0.14, 3, 1.2);
-            SetShadow("SubtleShadow", "#000000", 0.05, 9, 1);
-            r["PaperTextureBrush"] = MakePaperTexture(Color.FromRgb(0x6B, 0x4E, 0x2A), mottle: 4.5, fine: 2.5, seed: 7);
+            // 紙を机に置いたような、ぼかしの小さい茶色がかった影 (全ての影で共通)
+            SetAllShadows("#3A2A18", 0.14, 3, 1.5);
+            // タブ + 本体の紙: 同じ向きで少し大きめの影 + 紙が机に触れる所の薄い接地影 (向きを持たない)。
+            // 光の向きをそろえると本体の上端には影が落ちないため、輪郭は接地影で出す
+            SetShadow("SheetShadow", "#3A2A18", 0.20, 5, 3);
+            SetShadow("SheetContactShadow", "#3A2A18", 0.14, 3, 0);
+            // 選択中の行 (付箋): 同じ向きで、他の紙より少しだけ浮いた影
+            SetShadow("NoteShadow", "#3A2A18", 0.17, 4, 2.2);
+            r["NoteShadowColor"] = (Color)ColorConverter.ConvertFromString("#3A2A18");
+            r["NoteShadowOpacity"] = 0.17;
+            SetNoteTip("#D9D98038");
+            r["PaperTextureBrush"] = MakePaperTexture(Color.FromRgb(0x6B, 0x4E, 0x2A), mottle: 6, fine: 3.5, seed: 7);
         }
     }
 

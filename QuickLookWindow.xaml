@@ -1,6 +1,7 @@
 <Window x:Class="ColumnView.QuickLookWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:ColumnView"
         WindowStyle="None" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" ShowActivated="False" ResizeMode="NoResize"
         Topmost="True" SnapsToDevicePixels="True" UseLayoutRounding="True"
@@ -37,7 +38,7 @@
             <Setter Property="Width" Value="28"/>
             <Setter Property="Height" Value="28"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="ContentTemplate" Value="{StaticResource IconContent}"/>
             <Setter Property="FontSize" Value="13"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Focusable" Value="False"/>
@@ -121,12 +122,11 @@
     <!-- 影のための余白。中身だけを角丸で見せる (タイトルバー・枠は一切なし) -->
     <Border x:Name="Card" Margin="18" CornerRadius="12"
             Background="{DynamicResource SurfaceBrush}"
+            Effect="{DynamicResource CardShadowBelow}"
             SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged"
             MouseEnter="Card_MouseEnter" MouseLeave="Card_MouseLeave"
             PreviewMouseWheel="Card_PreviewMouseWheel">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="28" ShadowDepth="6" Opacity="0.32" Color="Black"/>
-        </Border.Effect>
+        <!-- 影はアプリ共通の「紙の影」 -->
 
         <Grid x:Name="Host" ClipToBounds="True">
             <!-- 画像 / シェルの大サムネイル (フォールバック) -->
@@ -167,8 +167,8 @@
             <!-- 音声のときの見出し (中身が真っ黒にならないように) -->
             <StackPanel x:Name="AudioGlyph" Visibility="Collapsed"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-                <TextBlock FontFamily="{StaticResource IconFont}" FontSize="72"
-                           Text="&#xE8D6;" HorizontalAlignment="Center"
+                <local:Icon FontSize="72"
+                           Glyph="&#xE8D6;" HorizontalAlignment="Center"
                            Foreground="{DynamicResource TextSecondaryBrush}"/>
                 <TextBlock x:Name="AudioName" Margin="0,14,0,0" FontSize="14"
                            HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"
@@ -220,7 +220,7 @@
                     HorizontalAlignment="Right" VerticalAlignment="Top"
                     Opacity="0" IsHitTestVisible="False" Cursor="Hand"
                     Focusable="False" IsTabStop="False"
-                    Click="CloseButton_Click" FontFamily="{StaticResource IconFont}"
+                    Click="CloseButton_Click" ContentTemplate="{StaticResource IconContent}"
                     FontSize="10" Content="&#xE8BB;">
                 <Button.Template>
                     <ControlTemplate TargetType="Button">

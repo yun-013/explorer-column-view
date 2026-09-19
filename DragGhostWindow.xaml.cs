@@ -210,7 +210,7 @@ public partial class DragGhostWindow : Window
         EffectBadge.Visibility = Visibility.Visible;
         EffectGlyph.Foreground = accent;
         EffectText.Foreground = accent;
-        (EffectGlyph.Text, EffectText.Text) = intent switch
+        (EffectGlyph.Glyph, EffectText.Text) = intent switch
         {
             DropIntent.Move => ("\uE72A", "移動"),   // Forward
             DropIntent.Link => ("\uE71B", "リンク"), // Link
