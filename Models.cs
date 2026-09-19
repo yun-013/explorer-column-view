@@ -40,7 +40,7 @@ public enum SortKey
     Type,
 }
 
-// Segoe MDL2 Assets のグリフ。ソースを ASCII に保つため ConvertFromUtf32 で定義する
+// アイコンの目印 (Segoe のコードポイント。Icon が対応する線画で描く)。ソースを ASCII に保つため ConvertFromUtf32 で定義する
 public static class Glyphs
 {
     public static readonly string Cloud = char.ConvertFromUtf32(0xE753);

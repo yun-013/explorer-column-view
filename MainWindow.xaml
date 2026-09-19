@@ -28,7 +28,7 @@
             <Setter Property="Margin" Value="1,0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
-            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
+            <Setter Property="ContentTemplate" Value="{StaticResource IconContent}"/>
             <Setter Property="FontSize" Value="14"/>
             <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -81,8 +81,8 @@
             <Setter Property="Margin" Value="3,0"/>
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="Foreground" Value="{DynamicResource TextSecondaryBrush}"/>
-            <Setter Property="FontFamily" Value="{StaticResource IconFont}"/>
-            <Setter Property="FontSize" Value="9"/>
+            <Setter Property="ContentTemplate" Value="{StaticResource IconContent}"/>
+            <Setter Property="FontSize" Value="11"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Template">
@@ -119,13 +119,15 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Grid>
+                        <!-- Outer: 接地影 / Root: 向きのある影 (影は 1 要素に 1 つなので入れ子にする) -->
+                        <Grid x:Name="Outer">
+                        <Grid x:Name="Root">
                             <Border x:Name="Bd" CornerRadius="10,10,0,0" Background="Transparent"
                                     Padding="11,7" MinWidth="130" MaxWidth="220">
                                 <DockPanel LastChildFill="True">
                                     <Button DockPanel.Dock="Right" Width="18" Height="18" Margin="6,0,0,0"
                                             Background="Transparent" BorderThickness="0" Cursor="Hand"
-                                            FontFamily="{StaticResource IconFont}" FontSize="9" Content="&#xE711;"
+                                            ContentTemplate="{StaticResource IconContent}" FontSize="9" Content="&#xE711;"
                                             Foreground="{DynamicResource TextSecondaryBrush}"
                                             ToolTip="タブを閉じる (Ctrl+W)"
                                             Click="CloseTab_Click" Tag="{Binding}"/>
@@ -147,6 +149,7 @@
                                   Fill="{DynamicResource WindowBackgroundBrush}"
                                   Data="M 0,0 A 8,8 0 0 0 8,8 L 0,8 Z"/>
                         </Grid>
+                        </Grid>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{DynamicResource TabHoverBrush}"/>
@@ -161,6 +164,9 @@
                                 <Setter TargetName="TabTitle" Property="FontWeight" Value="SemiBold"/>
                                 <Setter TargetName="FlareL" Property="Visibility" Value="Visible"/>
                                 <Setter TargetName="FlareR" Property="Visibility" Value="Visible"/>
+                                <!-- タブとすそ野の輪郭に紙の影 (下側はタブ列の境界で切れるので、下の帯とは地続きのまま) -->
+                                <Setter TargetName="Root" Property="Effect" Value="{DynamicResource SheetShadow}"/>
+                                <Setter TargetName="Outer" Property="Effect" Value="{DynamicResource SheetContactShadow}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -204,10 +210,6 @@
                                     <Setter Property="Margin" Value="0,1"/>
                                     <Setter Property="TextWrapping" Value="Wrap"/>
                                 </Style>
-                                <!-- サイズ・日付・寸法など数字の値 -->
-                                <Style TargetType="TextBlock" x:Key="FigureValue" BasedOn="{StaticResource Value}">
-                                    <Setter Property="FontFamily" Value="{StaticResource FigureFont}"/>
-                                </Style>
                             </Grid.Resources>
 
                             <TextBlock Grid.Row="0" Grid.Column="0" Text="名前" Style="{StaticResource Label}"/>
@@ -226,18 +228,18 @@
 
                             <TextBlock Grid.Row="3" Grid.Column="0" Text="サイズ" Style="{StaticResource Label}"
                                        Visibility="{Binding StatRowVisibility}"/>
-                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource FigureValue}"
+                            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding SizeText}" Style="{StaticResource Value}"
                                        Visibility="{Binding StatRowVisibility}"/>
 
                             <TextBlock Grid.Row="4" Grid.Column="0" Text="更新日時" Style="{StaticResource Label}"
                                        Visibility="{Binding StatRowVisibility}"/>
-                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource FigureValue}"
+                            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding ModifiedText}" Style="{StaticResource Value}"
                                        Visibility="{Binding StatRowVisibility}"/>
 
                             <!-- 寸法 (画像) / 長さ (動画・音声): ホバー時に取得 -->
                             <TextBlock Grid.Row="5" Grid.Column="0" Text="{Binding MetaLabel}" Style="{StaticResource Label}"
                                        Visibility="{Binding MetaRowVisibility}"/>
-                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding MetaValue}" Style="{StaticResource FigureValue}"
+                            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding MetaValue}" Style="{StaticResource Value}"
                                        Visibility="{Binding MetaRowVisibility}"/>
 
                             <!-- クラウド同期プロバイダ -->
@@ -300,15 +302,15 @@
                             </Style>
                         </ProgressBar.Style>
                     </ProgressBar>
-                    <TextBlock Text="{Binding DriveCapacityText}" FontSize="10.5" FontFamily="{StaticResource FigureFont}"
+                    <TextBlock Text="{Binding DriveCapacityText}" FontSize="10.5"
                                Foreground="{DynamicResource TextSecondaryBrush}"
                                Margin="0,2,0,0" Visibility="{Binding DriveGaugeVisibility}"/>
                 </StackPanel>
-                <TextBlock Grid.Column="2" FontFamily="{StaticResource IconFont}" FontSize="11"
-                           Text="{Binding Badge}" Foreground="{Binding BadgeBrush}"
+                <local:Icon Grid.Column="2" FontSize="11"
+                           Glyph="{Binding Badge}" Foreground="{Binding BadgeBrush}"
                            Margin="4,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Center">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
+                    <local:Icon.Style>
+                        <Style TargetType="local:Icon">
                             <Style.Triggers>
                                 <!-- バッジ無しの行は Margin ごと畳んで幅を空ける -->
                                 <DataTrigger Binding="{Binding Badge}" Value="">
@@ -316,10 +318,10 @@
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-                <TextBlock Grid.Column="3" FontFamily="{StaticResource IconFont}" FontSize="9"
-                           Text="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
+                    </local:Icon.Style>
+                </local:Icon>
+                <local:Icon Grid.Column="3" FontSize="9"
+                           Glyph="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
                            Visibility="{Binding ChevronVisibility}"
                            Margin="4,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
@@ -335,17 +337,16 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="14"/>
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" FontFamily="{StaticResource IconFont}" FontSize="14"
-                           Text="&#xE71D;" Foreground="{DynamicResource AccentBrush}"
+                <local:Icon Grid.Column="0" FontSize="14"
+                           Glyph="&#xE71D;" Foreground="{DynamicResource AccentBrush}"
                            VerticalAlignment="Center" HorizontalAlignment="Center"/>
                 <TextBlock Grid.Column="1" Text="{Binding Name}" FontWeight="SemiBold"
                            Margin="4,0,0,0" VerticalAlignment="Center"
                            TextTrimming="CharacterEllipsis"/>
                 <TextBlock Grid.Column="2" Text="{Binding MemberCount}" Foreground="{DynamicResource TextSecondaryBrush}"
-                           FontFamily="{StaticResource FigureFont}"
                            Margin="2,0,4,0" VerticalAlignment="Center"/>
-                <TextBlock Grid.Column="3" FontFamily="{StaticResource IconFont}" FontSize="9"
-                           Text="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
+                <local:Icon Grid.Column="3" FontSize="9"
+                           Glyph="&#xE76C;" Foreground="{DynamicResource TextTertiaryBrush}"
                            VerticalAlignment="Center" HorizontalAlignment="Right"/>
             </Grid>
         </DataTemplate>
@@ -405,8 +406,8 @@
                                 </ToggleButton.Template>
                             </ToggleButton>
                             <DockPanel Margin="10,0,9,0" IsHitTestVisible="False">
-                                <TextBlock DockPanel.Dock="Right" FontFamily="{StaticResource IconFont}" FontSize="8"
-                                           Text="&#xE70D;" Foreground="{DynamicResource TextSecondaryBrush}"
+                                <local:Icon DockPanel.Dock="Right" FontSize="8"
+                                           Glyph="&#xE70D;" Foreground="{DynamicResource TextSecondaryBrush}"
                                            VerticalAlignment="Center" Margin="6,0,0,0"/>
                                 <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
                                                   ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
@@ -433,13 +434,16 @@
         </Style>
     </Window.Resources>
 
-    <!-- ルート枠 (WindowChrome で標準枠を消しているため自前で薄い枠) -->
-    <Border x:Name="RootBorder" Background="{DynamicResource WindowBackgroundBrush}"
+    <!-- ルート枠 (WindowChrome で標準枠を消しているため自前で薄い枠)。
+         地の色はタブ列の色で、タブ以下の本体 (BodySheet) がその上に載った一枚の紙になる -->
+    <Border x:Name="RootBorder" Background="{DynamicResource CaptionBarBrush}"
             BorderBrush="{DynamicResource WindowOuterBorderBrush}" BorderThickness="1" CornerRadius="10">
         <DockPanel x:Name="RootDock">
 
-            <!-- 最上段: タブ列 + キャプションボタン (Chrome 風) -->
-            <Grid x:Name="CaptionBar" DockPanel.Dock="Top" Height="40" Background="{DynamicResource CaptionBarBrush}"
+            <!-- 最上段: タブ列 + キャプションボタン (Chrome 風)。
+                 背景は透明 (色は RootBorder)。本体の紙の影がタブ列の上に落ち、その上にタブを重ねるため
+                 本体より手前 (ZIndex=1) に描く。アクティブなタブは本体の影を覆って地続きに見える -->
+            <Grid x:Name="CaptionBar" DockPanel.Dock="Top" Height="40" Background="Transparent" Panel.ZIndex="1"
                   SizeChanged="CaptionBar_SizeChanged">
                 <Grid.ColumnDefinitions>
                     <!-- タブが増えてもキャプションボタンを押し出さない (タブ側をクリップ) -->
@@ -497,6 +501,17 @@
                 </StackPanel>
             </Grid>
 
+            <!-- 本体 (タブ以下): アクティブなタブとつながった一枚の紙 -->
+            <Grid>
+            <!-- 本体の紙の輪郭の影。本体の右端・下端はウィンドウの縁なので、影が見えるのは上端だけ。
+                 ウィンドウ全体の大きさに影を掛けるとリサイズのたびに大きな影を計算し直すので、
+                 上端の細い帯にだけ影を掛け、その下を影なしの本体の地色で覆う (帯の下側の影は隠れる) -->
+            <Border Height="12" VerticalAlignment="Top" Background="{DynamicResource WindowBackgroundBrush}"
+                    Effect="{DynamicResource SheetContactShadow}" IsHitTestVisible="False"/>
+            <Border x:Name="BodySheet" Background="{DynamicResource WindowBackgroundBrush}" CornerRadius="0,0,9,9"
+                    IsHitTestVisible="False"/>
+            <DockPanel>
+
             <!-- ツールバー: 独立した浮遊カード -->
             <Border x:Name="ToolbarCard" DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}"
                     Margin="6,4,6,4" CornerRadius="12"
@@ -526,20 +541,21 @@
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE7B3;"
                                   ToolTip="隠しファイルを表示 (Ctrl+H)" IsChecked="{Binding ShowHidden}"/>
                     <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
-                            ToolTip="昇順 / 降順の切り替え" Click="SortDirection_Click">
+                            ToolTip="昇順 / 降順の切り替え" Click="SortDirection_Click"
+                            ContentTemplate="{x:Null}">
                         <Button.Content>
-                            <TextBlock>
-                                <TextBlock.Style>
-                                    <Style TargetType="TextBlock">
-                                        <Setter Property="Text" Value="&#xE74B;"/>
+                            <local:Icon>
+                                <local:Icon.Style>
+                                    <Style TargetType="local:Icon">
+                                        <Setter Property="Glyph" Value="&#xE74B;"/>
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding SortDescending}" Value="False">
-                                                <Setter Property="Text" Value="&#xE74A;"/>
+                                                <Setter Property="Glyph" Value="&#xE74A;"/>
                                             </DataTrigger>
                                         </Style.Triggers>
                                     </Style>
-                                </TextBlock.Style>
-                            </TextBlock>
+                                </local:Icon.Style>
+                            </local:Icon>
                         </Button.Content>
                     </Button>
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE8B7;"
@@ -565,7 +581,7 @@
                             BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
                             Effect="{DynamicResource SubtleShadow}">
                         <Grid>
-                            <TextBlock FontFamily="{StaticResource IconFont}" FontSize="12" Text="&#xE721;"
+                            <local:Icon FontSize="12" Glyph="&#xE721;"
                                        Foreground="{DynamicResource TextSecondaryBrush}"
                                        VerticalAlignment="Center" Margin="9,0,0,0"/>
                             <TextBox x:Name="SearchBox" BorderThickness="0" Background="Transparent"
@@ -592,7 +608,7 @@
                             <Button Width="18" Height="18" Margin="0,0,5,0"
                                     HorizontalAlignment="Right" VerticalAlignment="Center"
                                     Background="Transparent" BorderThickness="0" Cursor="Hand"
-                                    FontFamily="{StaticResource IconFont}" FontSize="9" Content="&#xE711;"
+                                    ContentTemplate="{StaticResource IconContent}" FontSize="9" Content="&#xE711;"
                                     Foreground="{DynamicResource TextSecondaryBrush}"
                                     ToolTip="クリア" Click="SearchClear_Click">
                                 <Button.Style>
@@ -627,8 +643,8 @@
                                         </Style.Triggers>
                                     </Style>
                                 </DockPanel.Style>
-                                <TextBlock DockPanel.Dock="Left" FontFamily="{StaticResource IconFont}" FontSize="13"
-                                           Text="&#xE8B7;" Foreground="#FFE3A52E" Margin="8,0,2,0"
+                                <local:Icon DockPanel.Dock="Left" FontSize="13"
+                                           Glyph="&#xE8B7;" Foreground="#FFE3A52E" Margin="8,0,2,0"
                                            VerticalAlignment="Center"/>
                                 <!-- 深い階層では先頭ではなく末尾 (現在地) 側を見せる -->
                                 <ScrollViewer x:Name="CrumbScroll" HorizontalScrollBarVisibility="Hidden"
@@ -646,10 +662,10 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="{x:Type local:Crumb}">
                                             <StackPanel Orientation="Horizontal">
-                                                <TextBlock Text="&#xE76C;" FontFamily="{StaticResource IconFont}" FontSize="9"
+                                                <local:Icon Glyph="&#xE76C;" FontSize="9"
                                                            Foreground="{DynamicResource TextTertiaryBrush}" VerticalAlignment="Center" Margin="1,0">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
+                                                    <local:Icon.Style>
+                                                        <Style TargetType="local:Icon">
                                                             <Setter Property="Visibility" Value="Visible"/>
                                                             <Style.Triggers>
                                                                 <DataTrigger Binding="{Binding IsFirst}" Value="True">
@@ -657,8 +673,8 @@
                                                                 </DataTrigger>
                                                             </Style.Triggers>
                                                         </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
+                                                    </local:Icon.Style>
+                                                </local:Icon>
                                                 <Button Style="{StaticResource CrumbButton}" Content="{Binding Display}"
                                                         Tag="{Binding}" Click="Crumb_Click"/>
                                             </StackPanel>
@@ -683,8 +699,7 @@
             <StatusBar DockPanel.Dock="Bottom" Background="Transparent" BorderThickness="0" Margin="10,0,8,1"
                        FontSize="11" Padding="0">
                 <StatusBarItem Padding="0,1">
-                    <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextPrimaryBrush}"
-                               FontFamily="{StaticResource FigureFont}"/>
+                    <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource TextPrimaryBrush}"/>
                 </StatusBarItem>
             </StatusBar>
 
@@ -723,8 +738,8 @@
                                             Background="{DynamicResource AccentFocusBrush}" CornerRadius="8"
                                             Margin="5,5,5,2" Padding="9,5">
                                         <DockPanel>
-                                            <TextBlock DockPanel.Dock="Left" FontFamily="{StaticResource IconFont}" FontSize="12"
-                                                       Text="&#xE721;" Foreground="{DynamicResource AccentBrush}"
+                                            <local:Icon DockPanel.Dock="Left" FontSize="12"
+                                                       Glyph="&#xE721;" Foreground="{DynamicResource AccentBrush}"
                                                        VerticalAlignment="Center"/>
                                             <TextBlock Margin="6,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
                                                        Foreground="{DynamicResource TextPrimaryBrush}"
@@ -806,6 +821,8 @@
             </ScrollViewer>
             </Grid>
             </Border>
+            </DockPanel>
+            </Grid>
         </DockPanel>
     </Border>
 </Window>
