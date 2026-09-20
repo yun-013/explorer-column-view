@@ -21,6 +21,45 @@ public static class Shortcut
         Marshal.FinalReleaseComObject(link);
     }
 
+    /// <summary>ショートカットの中身 (プレビュー表示用)。</summary>
+    public readonly record struct LinkInfo(string Target, string Arguments, string WorkingDirectory, string Description);
+
+    /// <summary>.lnk の指す先などを読む。読めなければ null。</summary>
+    public static LinkInfo? Read(string linkPath)
+    {
+        var link = (IShellLinkW)new ShellLink();
+        try
+        {
+            ((IPersistFile)link).Load(linkPath, 0);
+            // リンク先が見つからないときに検索ダイアログを出させない (UI を持たないプレビューのため)
+            link.Resolve(IntPtr.Zero, SLR_NO_UI | SLR_NOSEARCH | SLR_NOTRACK | SLR_NOUPDATE);
+            return new LinkInfo(Get(b => link.GetPath(b, b.Capacity, IntPtr.Zero, 0)),
+                                Get(b => link.GetArguments(b, b.Capacity)),
+                                Get(b => link.GetWorkingDirectory(b, b.Capacity)),
+                                Get(b => link.GetDescription(b, b.Capacity)));
+        }
+        catch
+        {
+            return null;
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(link);
+        }
+
+        static string Get(Action<System.Text.StringBuilder> read)
+        {
+            var buffer = new System.Text.StringBuilder(1024);
+            try { read(buffer); } catch { return ""; }
+            return buffer.ToString();
+        }
+    }
+
+    private const int SLR_NO_UI = 0x1;
+    private const int SLR_NOUPDATE = 0x8;
+    private const int SLR_NOSEARCH = 0x10;
+    private const int SLR_NOTRACK = 0x20;
+
     /// <summary>衝突しない .lnk のパスを返す (「◯◯ - ショートカット.lnk」、既にあれば連番)。</summary>
     /// <param name="isDirectory">フォルダなら名前をそのまま使う。"my.folder" のような名前から
     /// 拡張子と誤認して ".folder" を落とさないため (エクスプローラーも落とさない)。</param>

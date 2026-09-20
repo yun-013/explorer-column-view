@@ -159,7 +159,7 @@
             <!-- 動画 / 音声 -->
             <MediaElement x:Name="MediaView" Visibility="Collapsed"
                           LoadedBehavior="Manual" UnloadedBehavior="Stop"
-                          Stretch="Uniform" ScrubbingEnabled="True"
+                          Stretch="Uniform"
                           MediaOpened="MediaView_MediaOpened"
                           MediaEnded="MediaView_MediaEnded"
                           MediaFailed="MediaView_MediaFailed"/>
@@ -167,9 +167,12 @@
             <!-- 音声のときの見出し (中身が真っ黒にならないように) -->
             <StackPanel x:Name="AudioGlyph" Visibility="Collapsed"
                         HorizontalAlignment="Center" VerticalAlignment="Center">
-                <local:Icon FontSize="72"
+                <local:Icon x:Name="AudioIcon" FontSize="72"
                            Glyph="&#xE8D6;" HorizontalAlignment="Center"
                            Foreground="{DynamicResource TextSecondaryBrush}"/>
+                <!-- 曲に埋め込まれたジャケット画像 (あれば音符アイコンの代わりに出す) -->
+                <Image x:Name="AudioArt" Visibility="Collapsed" MaxWidth="260" MaxHeight="260"
+                       Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
                 <TextBlock x:Name="AudioName" Margin="0,14,0,0" FontSize="14"
                            HorizontalAlignment="Center" TextTrimming="CharacterEllipsis"
                            MaxWidth="360" Foreground="{DynamicResource TextPrimaryBrush}"/>
