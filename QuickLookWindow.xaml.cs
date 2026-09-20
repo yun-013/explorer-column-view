@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -33,7 +34,7 @@ public partial class QuickLookWindow : Window
 
     private static readonly HashSet<string> AudioExts = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".opus",
+        ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".opus", ".aif", ".aiff", ".mka",
     };
 
     private const int GWL_EXSTYLE = -20;
@@ -116,15 +117,28 @@ public partial class QuickLookWindow : Window
             }
             else if (!item.IsDirectory && ShellMetadata.IsImage(item.Name))
             {
-                var bmp = await Task.Run(() => DecodeImage(path));
+                // アニメーション GIF は動かして見せる (静止 GIF は下の通常の画像表示へ)
+                var gif = string.Equals(ext, ".gif", StringComparison.OrdinalIgnoreCase)
+                    ? await Task.Run(() => TryLoadGif(path))
+                    : null;
                 if (gen != _showGen)
                     return;
-                ResetViews();
-                ImageView.Source = bmp;
-                ImageView.Visibility = Visibility.Visible;
-                double w = bmp.PixelWidth, h = bmp.PixelHeight;
-                if (w <= 0 || h <= 0) { w = 640; h = 480; }
-                FitToContent(w, h, owner);
+                if (gif is not null)
+                {
+                    ShowGif(gif, owner);
+                }
+                else
+                {
+                    var bmp = await Task.Run(() => DecodeImage(path));
+                    if (gen != _showGen)
+                        return;
+                    ResetViews();
+                    ImageView.Source = bmp;
+                    ImageView.Visibility = Visibility.Visible;
+                    double w = bmp.PixelWidth, h = bmp.PixelHeight;
+                    if (w <= 0 || h <= 0) { w = 640; h = 480; }
+                    FitToContent(w, h, owner);
+                }
             }
             else if (!item.IsDirectory && string.Equals(ext, ".pdf", StringComparison.OrdinalIgnoreCase))
             {
@@ -134,6 +148,17 @@ public partial class QuickLookWindow : Window
                                            || string.Equals(ext, ".markdown", StringComparison.OrdinalIgnoreCase)))
             {
                 await ShowMarkdownAsync(path, gen, owner);
+            }
+            else if (!item.IsDirectory && DocumentPreview.Handles(ext))
+            {
+                // Office 書類・書庫・表・ショートカット: 中身をテキストとして見せる
+                var text = await Task.Run(() => DocumentPreview.Read(path));
+                if (gen != _showGen)
+                    return;
+                if (text is null)
+                    await ShowFallbackAsync(path, gen, owner);
+                else
+                    ShowTextContent(text, owner);
             }
             else if (!item.IsDirectory && (TextExts.Contains(ext) || string.IsNullOrEmpty(ext)))
             {
@@ -172,6 +197,7 @@ public partial class QuickLookWindow : Window
         _hideBarTimer.Stop();
         _mediaMode = false;
         StopMedia();
+        StopGif();
         ImageView.Visibility = Visibility.Collapsed;
         ImageView.Source = null;
         ImageView.Stretch = Stretch.Uniform;
@@ -183,43 +209,192 @@ public partial class QuickLookWindow : Window
         PdfPages.Children.Clear();
         MediaView.Visibility = Visibility.Collapsed;
         AudioGlyph.Visibility = Visibility.Collapsed;
+        AudioArt.Visibility = Visibility.Collapsed;
+        AudioArt.Source = null;
+        AudioIcon.Visibility = Visibility.Visible;
         MediaBar.Visibility = Visibility.Collapsed;
         MediaBar.Opacity = 0;
+    }
+
+    // ---- アニメーション GIF ----
+
+    private GifAnimation? _gif;
+    private DispatcherTimer? _gifTimer;
+
+    /// <summary>アニメーション GIF なら読み込む (静止 GIF・壊れた GIF は null)。</summary>
+    private static GifAnimation? TryLoadGif(string path)
+    {
+        try { return GifAnimation.Load(path); }
+        catch { return null; }
+    }
+
+    private void ShowGif(GifAnimation gif, Window owner)
+    {
+        ResetViews();
+        _gif = gif;
+        ImageView.Source = gif.Bitmap;
+        ImageView.Visibility = Visibility.Visible;
+        FitToContent(gif.Width, gif.Height, owner);
+
+        _gifTimer ??= new DispatcherTimer(DispatcherPriority.Render);
+        _gifTimer.Tick += GifTimer_Tick;
+        _gifTimer.Interval = gif.Advance();
+        _gifTimer.Start();
+    }
+
+    private void GifTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_gif is null)
+        {
+            StopGif();
+            return;
+        }
+        _gifTimer!.Interval = _gif.Advance();
+    }
+
+    private void StopGif()
+    {
+        if (_gifTimer is not null)
+        {
+            _gifTimer.Stop();
+            _gifTimer.Tick -= GifTimer_Tick;
+        }
+        _gif = null;
     }
 
     // ---- 種類ごとの表示 ----
 
     /// <summary>画像をワーカースレッドでデコードする (Freeze して UI へ渡す)。</summary>
-    private static BitmapImage DecodeImage(string path)
+    private static BitmapSource DecodeImage(string path)
     {
+        // 先にヘッダーだけ読んで、元の幅と撮影時の向き (EXIF Orientation) を得る
+        int sourceWidth = 0;
+        int orientation = 1;
+        try
+        {
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            var frame = BitmapDecoder.Create(fs, BitmapCreateOptions.DelayCreation | BitmapCreateOptions.IgnoreColorProfile,
+                BitmapCacheOption.None).Frames[0];
+            sourceWidth = frame.PixelWidth;
+            orientation = ReadOrientation(frame.Metadata as BitmapMetadata);
+        }
+        catch { /* 読めなければ従来どおりの縮小デコードに任せる */ }
+
         var bmp = new BitmapImage();
         bmp.BeginInit();
         bmp.CacheOption = BitmapCacheOption.OnLoad;
         bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
         bmp.UriSource = new Uri(path);
-        // 巨大画像でメモリを食い過ぎないよう、表示上限に合わせてデコード
-        bmp.DecodePixelWidth = (int)Math.Min(SystemParameters.WorkArea.Width * MaxWidthRatio * 1.5, 1920);
+        // 巨大画像でメモリを食い過ぎないよう、表示上限を超えるものだけ縮小してデコードする
+        // (小さい画像まで上限幅でデコードすると、アイコン等が引き伸ばされて巨大・ぼやけた表示になる)
+        int limit = (int)Math.Min(SystemParameters.WorkArea.Width * MaxWidthRatio * 1.5, 1920);
+        if (sourceWidth <= 0 || sourceWidth > limit)
+            bmp.DecodePixelWidth = limit;
         bmp.EndInit();
         bmp.Freeze();
-        return bmp;
+        return ApplyOrientation(bmp, orientation);
+    }
+
+    /// <summary>EXIF の向き (1〜8)。スマホ写真は横向きのまま保存して、向きをここに記録している。</summary>
+    private static int ReadOrientation(BitmapMetadata? meta)
+    {
+        if (meta is null)
+            return 1;
+        foreach (var query in new[] { "System.Photo.Orientation", "/app1/ifd/{ushort=274}", "/ifd/{ushort=274}" })
+        {
+            try
+            {
+                if (meta.GetQuery(query) is ushort o && o is >= 1 and <= 8)
+                    return o;
+            }
+            catch { /* 形式が対応していないクエリは飛ばす */ }
+        }
+        return 1;
+    }
+
+    /// <summary>EXIF の向きどおりに回転・反転する (WPF の BitmapImage は向きを無視するため)。</summary>
+    private static BitmapSource ApplyOrientation(BitmapSource bmp, int orientation)
+    {
+        Transform? transform = orientation switch
+        {
+            2 => new ScaleTransform(-1, 1),
+            3 => new RotateTransform(180),
+            4 => new ScaleTransform(1, -1),
+            5 => new TransformGroup { Children = { new RotateTransform(90), new ScaleTransform(-1, 1) } },
+            6 => new RotateTransform(90),
+            7 => new TransformGroup { Children = { new RotateTransform(270), new ScaleTransform(-1, 1) } },
+            8 => new RotateTransform(270),
+            _ => null,
+        };
+        if (transform is null)
+            return bmp;
+        var rotated = new TransformedBitmap(bmp, transform);
+        rotated.Freeze();
+        return rotated;
+    }
+
+    /// <summary>テキストとして読む先頭のバイト数。</summary>
+    private const int TextHeadBytes = 512 * 1024;
+
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, throwOnInvalidBytes: true);
+
+    /// <summary>BOM の無い UTF-8 として読めないテキストは Shift_JIS とみなす (日本語 Windows の旧来の既定)。</summary>
+    private static Encoding ShiftJis
+    {
+        get
+        {
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+            return Encoding.GetEncoding(932);
+        }
     }
 
     /// <summary>テキストの先頭を読む。バイナリらしければ null (フォールバック表示へ回す)。</summary>
-    private static string? ReadTextHead(string path)
+    internal static string? ReadTextHead(string path)
     {
-        string text;
-        using (var reader = new StreamReader(path, detectEncodingFromByteOrderMarks: true))
+        byte[] bytes;
+        bool truncated;
+        using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
         {
-            var buffer = new char[256 * 1024];
-            int read = reader.Read(buffer, 0, buffer.Length);
-            text = new string(buffer, 0, read);
-            if (!reader.EndOfStream)
-                text += "\n\n… (以降は省略)";
+            bytes = new byte[(int)Math.Min(fs.Length, TextHeadBytes)];
+            fs.ReadExactly(bytes);
+            truncated = fs.Length > bytes.Length;
         }
+
+        string text = DecodeText(bytes, truncated);
+        if (truncated)
+            text += "\n\n… (以降は省略)";
         // NUL が多いバイナリはテキスト扱いしない
         if (text.Length > 0 && text.Count(c => c == '\0') > text.Length / 64)
             return null;
+        // 圧縮データ (音声・動画・アーカイブ等) は NUL が少なくても制御文字が 1 割近く混じる。
+        // テキストに現れる制御文字 (タブ・改行・改ページ・ESC) 以外が 1% を超えたらバイナリとみなす
+        // (Shift_JIS 等の文字化けは 0x80 以上なので、ここには引っかからない)
+        if (text.Length > 0 && text.Count(c => c < ' ' && c is not ('\t' or '\n' or '\r' or '\f' or '\v' or '\x1b')) > text.Length / 100)
+            return null;
         return text;
+    }
+
+    /// <summary>BOM があればそれに従い、無ければ UTF-8 → だめなら Shift_JIS で文字列にする。</summary>
+    private static string DecodeText(byte[] bytes, bool truncated)
+    {
+        if (bytes.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF }))
+            return Encoding.UTF8.GetString(bytes, 3, bytes.Length - 3);
+        if (bytes.AsSpan().StartsWith(new byte[] { 0xFF, 0xFE }))
+            return Encoding.Unicode.GetString(bytes, 2, bytes.Length - 2);
+        if (bytes.AsSpan().StartsWith(new byte[] { 0xFE, 0xFF }))
+            return Encoding.BigEndianUnicode.GetString(bytes, 2, bytes.Length - 2);
+        try
+        {
+            // 途中で切った場合は末尾の文字が欠けていても不正扱いしない (flush: false で保留させる)
+            var decoder = StrictUtf8.GetDecoder();
+            var chars = new char[StrictUtf8.GetMaxCharCount(bytes.Length)];
+            int count = decoder.GetChars(bytes, 0, bytes.Length, chars, 0, flush: !truncated);
+            return new string(chars, 0, count);
+        }
+        catch (DecoderFallbackException)
+        {
+            return ShiftJis.GetString(bytes);
+        }
     }
 
     private void ShowTextContent(string text, Window owner)
@@ -242,6 +417,9 @@ public partial class QuickLookWindow : Window
         _mediaShowGen = gen;
         _mediaOwner = owner;
         _mediaAudio = audio;
+        // シーク中のコマ表示 (Scrubbing) は動画だけ。映像の無い音声で有効にすると
+        // メディアが開かれないまま止まり (MediaOpened も MediaFailed も来ない)、再生されない
+        MediaView.ScrubbingEnabled = !audio;
         MediaView.Source = new Uri(path);
         // 音声でも MediaElement は表示のまま (Collapsed だと再生されない)。
         // 映像の無い音声は AudioGlyph を上に重ねて見た目を整える。
@@ -253,6 +431,7 @@ public partial class QuickLookWindow : Window
             MediaBar.Visibility = Visibility.Visible;
             FitToContent(420, 260, owner);
             RevealBar();
+            ShowAlbumArtAsync(path, gen, owner);
         }
         // 動画はここではサイズを決めない。MediaOpened で実寸が分かってから
         // サイズ確定→表示することで「小さく開いてから広がる」ガタつきを無くす
@@ -262,16 +441,38 @@ public partial class QuickLookWindow : Window
         _mediaTimer.Start();
     }
 
+    /// <summary>曲に埋め込まれたジャケット画像を (あれば) 音符アイコンの代わりに出す。</summary>
+    private async void ShowAlbumArtAsync(string path, int gen, Window owner)
+    {
+        long stamp = 0;
+        try { stamp = new FileInfo(path).LastWriteTimeUtc.Ticks; } catch { }
+        var art = await Task.Run(() =>
+            ShellThumbnail.Get(path, 512, stamp, allowDownload: true, thumbnailOnly: true));
+        if (art is null || gen != _showGen || !_mediaAudio)
+            return;
+        AudioArt.Source = art;
+        AudioArt.Visibility = Visibility.Visible;
+        AudioIcon.Visibility = Visibility.Collapsed;
+        // ジャケットが入る縦長の窓にする (曲名はその下)
+        FitToContent(320, 380, owner);
+    }
+
     private void MediaView_MediaOpened(object sender, RoutedEventArgs e)
     {
         if (_mediaShowGen != _showGen)
             return;
-        if (MediaView.NaturalDuration.HasTimeSpan)
-            Seek.Maximum = MediaView.NaturalDuration.TimeSpan.TotalSeconds;
+        OnMediaOpened(MediaView.NaturalVideoWidth, MediaView.NaturalVideoHeight);
+    }
+
+    /// <summary>再生の準備ができた (WPF / Media Foundation 共通)。動画はここで実寸に合わせて表示する。</summary>
+    private void OnMediaOpened(int videoWidth, int videoHeight)
+    {
+        if (MediaDuration is { } duration)
+            Seek.Maximum = duration.TotalSeconds;
         if (!_mediaAudio)
         {
-            double w = MediaView.NaturalVideoWidth > 0 ? MediaView.NaturalVideoWidth : 720;
-            double h = MediaView.NaturalVideoHeight > 0 ? MediaView.NaturalVideoHeight : 420;
+            double w = videoWidth > 0 ? videoWidth : 720;
+            double h = videoHeight > 0 ? videoHeight : 420;
             FitToContent(w, h, _mediaOwner ?? Application.Current.MainWindow ?? this);
             MediaBar.Visibility = Visibility.Visible;
             RevealBar();
@@ -283,13 +484,99 @@ public partial class QuickLookWindow : Window
 
     private async void MediaView_MediaFailed(object sender, ExceptionRoutedEventArgs e)
     {
-        // 再生できない形式はサムネイル / アイコンにフォールバック
         if (_mediaShowGen != _showGen || CurrentPath is null)
+            return;
+        // WPF (Windows Media Player 系) が開けない形式 (ogg / opus / webm 等) は Media Foundation で再生し直す
+        if (_mediaMode && _mf is null)
+        {
+            try
+            {
+                StartMfPlayback(CurrentPath);
+                return;
+            }
+            catch { /* Media Foundation も使えなければ下のフォールバックへ */ }
+        }
+        await ShowMediaUnsupportedAsync();
+    }
+
+    /// <summary>再生できない形式はサムネイル / アイコンにフォールバック。</summary>
+    private async Task ShowMediaUnsupportedAsync()
+    {
+        if (CurrentPath is null)
             return;
         var owner = _mediaOwner ?? Application.Current.MainWindow ?? this;
         try { await ShowFallbackAsync(CurrentPath, _showGen, owner); } catch { }
         if (!IsVisible)
             Show();
+    }
+
+    // ---- Media Foundation による代替再生 ----
+
+    private MfPlayback? _mf;
+
+    private void StartMfPlayback(string path)
+    {
+        try { MediaView.Source = null; } catch { }
+        MediaView.Visibility = Visibility.Collapsed;
+
+        var mf = new MfPlayback(path, Dispatcher);
+        _mf = mf;
+        mf.Opened += () =>
+        {
+            if (_mf != mf)
+                return;
+            if (!_mediaAudio && mf.Video is { } video)
+            {
+                // 映像はコマごとに書き換わる WriteableBitmap を画像枠で見せる
+                ImageView.Source = video;
+                ImageView.Visibility = Visibility.Visible;
+            }
+            OnMediaOpened(mf.VideoWidth, mf.VideoHeight);
+            if (_isPlaying)
+                mf.Play();
+        };
+        mf.Failed += async () =>
+        {
+            if (_mf != mf)
+                return;
+            StopMedia();
+            await ShowMediaUnsupportedAsync();
+        };
+        mf.Ended += () =>
+        {
+            if (_mf == mf)
+                MediaView_MediaEnded(this, new RoutedEventArgs());
+        };
+    }
+
+    // ---- 再生中のメディア (WPF / Media Foundation) への共通操作 ----
+
+    private TimeSpan? MediaDuration => _mf is not null
+        ? _mf.Duration
+        : MediaView.NaturalDuration.HasTimeSpan ? MediaView.NaturalDuration.TimeSpan : null;
+
+    private TimeSpan MediaPosition
+    {
+        get => _mf?.Position ?? MediaView.Position;
+        set
+        {
+            if (_mf is not null)
+                _mf.Position = value;
+            else if (MediaView.Source is not null)
+                MediaView.Position = value;
+        }
+    }
+
+    private void MediaPlay()
+    {
+        if (_mf is not null) _mf.Play();
+        else MediaView.Play();
+    }
+
+    private void MediaPause()
+    {
+        if (_mf is not null) _mf.Pause();
+        else MediaView.Pause();
     }
 
     // ---- PDF (Windows 内蔵の PDF エンジンでページを実レンダリング) ----
@@ -753,6 +1040,11 @@ public partial class QuickLookWindow : Window
     {
         try { MediaView.Stop(); } catch { }
         MediaView.Source = null;
+        if (_mf is not null)
+        {
+            _mf.Dispose();
+            _mf = null;
+        }
         _isPlaying = false;
     }
 
@@ -760,8 +1052,8 @@ public partial class QuickLookWindow : Window
     {
         try
         {
-            MediaView.Position = TimeSpan.Zero;
-            MediaView.Pause();
+            MediaPosition = TimeSpan.Zero;
+            MediaPause();
         }
         catch { /* メディアが既にアンロードされていたら無視 */ }
         _isPlaying = false;
@@ -772,8 +1064,8 @@ public partial class QuickLookWindow : Window
     {
         try
         {
-            if (_isPlaying) { MediaView.Pause(); PlayPause.Content = GlyphPlay; }
-            else { MediaView.Play(); PlayPause.Content = GlyphPause; }
+            if (_isPlaying) { MediaPause(); PlayPause.Content = GlyphPlay; }
+            else { MediaPlay(); PlayPause.Content = GlyphPause; }
             _isPlaying = !_isPlaying;
         }
         catch { /* メディアが既にアンロードされていたら無視 */ }
@@ -781,17 +1073,20 @@ public partial class QuickLookWindow : Window
 
     private void SyncSeek()
     {
-        if (_seeking || !MediaView.NaturalDuration.HasTimeSpan)
+        if (_seeking || MediaDuration is not { } duration)
             return;
+        // Media Foundation は開いた後で長さが確定することがあるので、つど合わせる
+        if (Math.Abs(Seek.Maximum - duration.TotalSeconds) > 0.01)
+            Seek.Maximum = duration.TotalSeconds;
         // 変化のないフレームでは UI を触らない (タイマー起因の無駄な再描画を抑える)
-        var pos = MediaView.Position;
+        var pos = MediaPosition;
         var next = pos.TotalSeconds;
         if (Math.Abs(Seek.Value - next) > 0.05)
             Seek.Value = next;
         var cur = Fmt(pos);
         if (TimeCur.Text != cur)
             TimeCur.Text = cur;
-        var total = " / " + Fmt(MediaView.NaturalDuration.TimeSpan);
+        var total = " / " + Fmt(duration);
         if (TimeTotal.Text != total)
             TimeTotal.Text = total;
     }
@@ -838,8 +1133,7 @@ public partial class QuickLookWindow : Window
     {
         try
         {
-            if (MediaView.Source is not null)
-                MediaView.Position = TimeSpan.FromSeconds(seconds);
+            MediaPosition = TimeSpan.FromSeconds(seconds);
         }
         catch { /* アンロード直後のシークは無視 */ }
     }
@@ -868,6 +1162,7 @@ public partial class QuickLookWindow : Window
         _showGen++; // 遅れて完了した読み込みが再表示しないように
         _mediaTimer.Stop();
         StopMedia();
+        StopGif();
         // マウスがカードの上にあるまま閉じたとき、次に開いた瞬間から閉じるボタンが
         // 出たままにならないよう、ホバー状態を明示的に戻しておく
         CloseButton.Opacity = 0;

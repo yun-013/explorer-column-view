@@ -140,8 +140,8 @@ public static class ShellMetadata
 
     private static readonly HashSet<string> MediaExts = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".m4v", ".mpg", ".mpeg", ".flv", ".3gp",
-        ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".opus",
+        ".mp4", ".mov", ".mkv", ".avi", ".wmv", ".webm", ".m4v", ".mpg", ".mpeg", ".flv", ".3gp", ".mts", ".m2ts",
+        ".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma", ".opus", ".aif", ".aiff", ".mka",
     };
 
     public static bool IsImage(string name) => ImageExts.Contains(Path.GetExtension(name));
