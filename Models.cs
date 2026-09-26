@@ -898,10 +898,12 @@ public class ColumnModel : ObservableObject, IDisposable
             ?? Environment.GetEnvironmentVariable("OneDriveCommercial");
         AddKnown("OneDrive", oneDrive);
 
+        var shownDrives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var drive in DriveInfo.GetDrives())
         {
             if (!drive.IsReady)
                 continue;
+            shownDrives.Add(drive.RootDirectory.FullName);
             var label = string.IsNullOrEmpty(drive.VolumeLabel)
                 ? (drive.DriveType == DriveType.Fixed ? "ローカル ディスク" : drive.DriveType.ToString())
                 : drive.VolumeLabel;
@@ -921,7 +923,7 @@ public class ColumnModel : ObservableObject, IDisposable
         // DriveInfo では見えない「PC」直下の項目 — ドライブ文字を持たない接続機器
         // (iPhone・Android・カメラ等の MTP/PTP) と、切断中のネットワークドライブ。
         // エクスプローラーと同じくドライブの後ろに並べる。
-        foreach (var entry in ComputerFolder.EnumerateMissing())
+        foreach (var entry in ComputerFolder.EnumerateMissing(shownDrives))
         {
             if (!addedPaths.Add(entry.Path.TrimEnd('\\')))
                 continue;
