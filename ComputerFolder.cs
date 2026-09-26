@@ -8,7 +8,7 @@ namespace ColumnView;
 /// エクスプローラーの「PC」に並ぶのにホーム列に出ない、という食い違いを埋めるのが役目:
 ///  - ポータブルデバイス (iPhone・Android・カメラ等の MTP/PTP)。ドライブ文字を持たない
 ///  - 切断中のネットワークドライブ。ドライブ文字は記憶されているが未接続のため
-///    <c>GetLogicalDrives()</c> に載らず、DriveInfo からは存在ごと見えない
+///    <c>GetLogicalDrives()</c> に載らないか、載っていても接続先に届かず IsReady が false になる
 /// </summary>
 public static class ComputerFolder
 {
@@ -29,18 +29,21 @@ public static class ComputerFolder
     private const int MaxStorages = 8;
 
     /// <summary>DriveInfo では拾えない「PC」直下の項目を列挙する。取得できなければ空。</summary>
-    public static List<Entry> EnumerateMissing()
+    /// <param name="shownDrives">ホーム列に既に並べたドライブのルート ("C:\" 等)。</param>
+    public static List<Entry> EnumerateMissing(IReadOnlySet<string> shownDrives)
     {
-        // 既に DriveInfo 側で見えているドライブ文字。ここに載っていないドライブだけを足す
-        // (空の DVD ドライブのように「文字はあるが未挿入」のものは従来どおり出さない)。
-        HashSet<string> knownDrives;
+        // 足さないドライブ文字 = 既に並べたもの + 文字はあるが並べなかったもののうち
+        // ネットワークドライブ以外 (空の DVD ドライブのような「未挿入」は従来どおり出さない)。
+        // 切断中のネットワークドライブは文字が残っていても接続先に届かず IsReady が false に
+        // なるので、ここで拾わないとどこにも出なくなる。
+        var remembered = new HashSet<string>(RememberedDrives(), StringComparer.OrdinalIgnoreCase);
+        var knownDrives = new HashSet<string>(shownDrives, StringComparer.OrdinalIgnoreCase);
         try
         {
-            knownDrives = new HashSet<string>(Directory.GetLogicalDrives(), StringComparer.OrdinalIgnoreCase);
+            knownDrives.UnionWith(Directory.GetLogicalDrives().Where(d => !remembered.Contains(d)));
         }
         catch
         {
-            knownDrives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
         List<Entry> result = new();
@@ -112,7 +115,7 @@ public static class ComputerFolder
                             continue;
 
                         // ファイルシステム上に実体がある項目 = ドライブか「ドキュメント」等の
-                        // ユーザーフォルダ。ドライブのルートだけを見て、DriveInfo が知らない
+                        // ユーザーフォルダ。ドライブのルートだけを見て、まだ並べていない
                         // 文字 (= 切断中のネットワークドライブ) なら足す。
                         if ((attributes & SFGAO_FILESYSTEM) != 0)
                         {
@@ -238,6 +241,18 @@ public static class ComputerFolder
     {
         if (!IsDriveRoot(root))
             return "ネットワークドライブではありません";
+
+        // ドライブ文字が残ったまま切断されている場合は、アクセスすれば Windows が
+        // 保存済みの資格情報で繋ぎ直す (WNetAddConnection2 は「割り当て済み」で失敗する)。
+        // 既に誰かが繋ぎ直した場合もここで成功になる。
+        try
+        {
+            if (Directory.GetLogicalDrives().Contains(root, StringComparer.OrdinalIgnoreCase))
+                return Directory.Exists(root) ? null : "接続先に届きません";
+        }
+        catch
+        {
+        }
 
         string? remote;
         try

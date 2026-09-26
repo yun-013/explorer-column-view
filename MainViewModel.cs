@@ -1325,10 +1325,10 @@ public class MainViewModel : ObservableObject
             return;
         }
 
-        // 切断中のネットワークドライブ: ドライブ文字が存在しないので、そのまま列挙しても
-        // 「見つかりません」になるだけ。接続には数秒〜十数秒かかるので、↑↓ で行を通り過ぎる
-        // たびに待たされないよう、明示操作 (Enter / ダブルクリック) のときだけ繋ぎ直す。
-        if (item.IsDisconnectedDrive && !Directory.Exists(item.Path))
+        // 切断中のネットワークドライブ: そのまま列挙しても「見つかりません」になるか、
+        // 届かない接続先を待って数十秒止まるだけ。存在確認も同じだけ待たされるので
+        // ここでは触らず、明示操作 (Enter / ダブルクリック) のときに裏で繋ぎ直す。
+        if (item.IsDisconnectedDrive)
         {
             StatusText = $"{item.Name} — 切断中 (Enter / ダブルクリックで接続)";
             return;
@@ -1402,7 +1402,8 @@ public class MainViewModel : ObservableObject
                 return;
             }
             // 切断中のネットワークドライブは、繋ぎ直してから開く
-            if (item.IsDisconnectedDrive && !Directory.Exists(item.Path))
+            // (存在確認も接続先を待つので UI スレッドではしない)
+            if (item.IsDisconnectedDrive)
             {
                 _ = ConnectDriveAsync(item);
                 return;
