@@ -83,18 +83,25 @@ public static class IconCache
         }
     }
 
-    /// <summary>実パスからのアイコン (ドライブ・特殊フォルダ用)。パス単位でキャッシュ。</summary>
+    /// <summary>実パスからのアイコン (ドライブ・特殊フォルダ用)。パス単位でキャッシュ。
+    /// 実パスへの問い合わせ (SHGetFileInfo) はロックの外で行う — 届かない共有や応答しない
+    /// .lnk の先で数十秒かかっても、UI スレッドの拡張子アイコン取得まで道連れにしない。</summary>
     public static ImageSource? GetByPath(string path)
     {
-        lock (_lock)
-        {
-            if (_cache.TryGetValue(path, out var cached))
-                return cached;
+        if (TryGetCached(path, out var cached))
+            return cached;
 
-            var icon = Load(path, 0, 0);
+        var icon = Load(path, 0, 0);
+        lock (_lock)
             _cache[path] = icon;
-            return icon;
-        }
+        return icon;
+    }
+
+    /// <summary>取得済みのアイコンだけを見る (実パスには触れない)。</summary>
+    public static bool TryGetCached(string path, out ImageSource? icon)
+    {
+        lock (_lock)
+            return _cache.TryGetValue(path, out icon);
     }
 
     private static ImageSource? Load(string path, uint attributes, uint extraFlags)

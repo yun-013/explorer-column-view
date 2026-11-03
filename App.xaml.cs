@@ -88,6 +88,9 @@ public partial class App : Application
         // 起動をブロックしない (オフラインの NAS は Directory.Exists が数秒待つことがある)
         _ = Task.Run(FileOps.PurgeAllTrashRoots);
 
+        // クラウドの同期ルート検出を裏で済ませておく (初回がツールチップ等の UI スレッドで走らないように)
+        CloudSync.Warm();
+
         ConfigureJumpList();
 
         new MainWindow(MainViewModel.CreateForStartup(initialFolder)) { RestorePlacement = true }.Show();
@@ -111,6 +114,10 @@ public partial class App : Application
         {
             return null;
         }
+        // 届かない共有の存在確認は数十秒返ってこず、ウィンドウが出る前に止まる。
+        // 短い時間で届かなければフォルダと見なして開き、列側の「アクセスできません」に任せる
+        if (Reachability.IsNetworkPath(path) && !Reachability.IsReachableAsync(path).GetAwaiter().GetResult())
+            return path;
         if (Directory.Exists(path))
             return path;
         if (File.Exists(path))

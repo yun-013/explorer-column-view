@@ -20,10 +20,20 @@ public static class CloudSync
 {
     public record SyncRoot(string Path, string Provider);
 
-    private static List<SyncRoot>? _roots;
+    private static readonly Lazy<List<SyncRoot>> _roots = new(EnumerateRoots);
 
     /// <summary>登録済みの同期ルート (プロバイダ名付き)。初回に一度だけレジストリを読む。</summary>
-    public static IReadOnlyList<SyncRoot> Roots => _roots ??= EnumerateRoots();
+    public static IReadOnlyList<SyncRoot> Roots => _roots.Value;
+
+    /// <summary>同期ルートとストリーミング型ドライブの検出を裏で済ませておく。
+    /// 初回の検出はドライブに問い合わせるので、ツールチップや右クリックの延長
+    /// (UI スレッド) で初めて走らないよう、起動時に呼ぶ。</summary>
+    public static void Warm()
+        => Task.Run(() =>
+        {
+            _ = Roots;
+            _ = StreamingRoots;
+        });
 
     /// <summary>指定パスが属するクラウドプロバイダ名。該当しなければ null。</summary>
     public static string? ProviderForPath(string path)
@@ -62,10 +72,10 @@ public static class CloudSync
     //   割り当て > 0            → ローカルにキャッシュ済み (✓)
     // これはメタデータ照会のみでダウンロードを誘発しない。
 
-    private static List<SyncRoot>? _streamingRoots;
+    private static readonly Lazy<List<SyncRoot>> _streamingRoots = new(DetectStreamingRoots);
 
     /// <summary>ストリーミング型仮想ドライブのルート一覧。初回に一度だけドライブを走査。</summary>
-    public static IReadOnlyList<SyncRoot> StreamingRoots => _streamingRoots ??= DetectStreamingRoots();
+    public static IReadOnlyList<SyncRoot> StreamingRoots => _streamingRoots.Value;
 
     private static List<SyncRoot> DetectStreamingRoots()
     {
@@ -76,7 +86,9 @@ public static class CloudSync
             {
                 try
                 {
-                    if (!drive.IsReady)
+                    // ネットワークドライブ・光学ドライブは対象外。届かない NAS や空のドライブに
+                    // IsReady を聞くと数十秒返ってこないことがある (DriveFS の仮想ドライブは Fixed)
+                    if (drive.DriveType is DriveType.Network or DriveType.CDRom || !drive.IsReady)
                         continue;
                     var label = drive.VolumeLabel;
                     if (label.Contains("Google Drive", StringComparison.OrdinalIgnoreCase))

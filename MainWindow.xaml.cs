@@ -968,6 +968,30 @@ public partial class MainWindow : Window
         return move;
     }
 
+    /// <summary>届かないネットワーク上の場所を右クリック: シェルに問い合わせずに済む項目だけを出す。</summary>
+    private void ShowUnreachableContextMenu(string path, ListBox owner)
+    {
+        _vm.StatusText = $"接続先に届きません: {path}";
+        var menu = new ContextMenu { PlacementTarget = owner };
+        var header = new MenuItem { Header = "接続先に届かないため、使える操作を絞っています", IsEnabled = false };
+        menu.Items.Add(header);
+        menu.Items.Add(new Separator());
+        var favorite = new MenuItem
+        {
+            Header = _vm.IsFavoritePath(path) ? "お気に入りから削除" : "お気に入りに追加",
+        };
+        favorite.Click += async (_, _) => await _vm.ToggleFavoriteAsync(path);
+        menu.Items.Add(favorite);
+        var copy = new MenuItem { Header = "パスをコピー" };
+        copy.Click += (_, _) =>
+        {
+            if (ClipboardOps.SetText(path))
+                _vm.StatusText = $"パスをコピーしました: {path}";
+        };
+        menu.Items.Add(copy);
+        menu.IsOpen = true;
+    }
+
     /// <summary>グループメンバー (フォルダ) を右クリック: グループから外す。</summary>
     private void ShowGroupMemberContextMenu(FileSystemItem member, ListBox owner)
     {
@@ -1032,6 +1056,14 @@ public partial class MainWindow : Window
         var hwnd = new WindowInteropHelper(this).Handle;
         var screen = lb.PointToScreen(e.GetPosition(lb));
         e.Handled = true;
+
+        // シェルのメニューは UI スレッドで対象に問い合わせるため、届かない共有だと
+        // 数十秒固まる。先に裏で届くかを確かめ、届かなければアプリ独自の簡易メニューにする
+        if (Reachability.IsNetworkPath(targetPath) && !await Reachability.IsReachableAsync(targetPath))
+        {
+            ShowUnreachableContextMenu(targetPath, lb);
+            return;
+        }
 
         // ピン属性での切替が効くのは cfapi 登録のクラウドのみ。Google ドライブ (DriveFS) は
         // 独自メニュー (オフライン アクセス) がシェルメニュー側に出るので独自項目は足さない
@@ -2317,7 +2349,7 @@ public partial class MainWindow : Window
                 case Key.T:
                     // 直前に閉じたタブを開き直す (ブラウザ / エクスプローラーと同じ)
                     e.Handled = true;
-                    _vm.ReopenClosedTab();
+                    await _vm.ReopenClosedTabAsync();
                     break;
                 case Key.N:
                     e.Handled = true;
