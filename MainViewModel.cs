@@ -103,6 +103,11 @@ public class MainViewModel : ObservableObject
         return false;
     }
 
+    /// <summary>ファイル操作 (専用スレッドで実行) を 1 つずつ順番に通す。前の操作が終わって
+    /// 取り消し履歴が積まれてから次へ進むので、実行中に Ctrl+Z を押しても順序が狂わない。
+    /// UndoStack と同じく全ウィンドウで共有する。</summary>
+    private static readonly SemaphoreSlim _fileOpGate = new(1, 1);
+
     public async Task RenameAsync(FileSystemItem item, string newName)
     {
         newName = newName.Trim();
@@ -113,21 +118,33 @@ public class MainViewModel : ObservableObject
         var dir = Path.GetDirectoryName(item.Path);
         if (dir is null)
             return;
+        await _fileOpGate.WaitAsync();
         try
         {
+            var source = item.Path;
             var dest = Path.Combine(dir, newName);
-            if (item.IsDirectory)
-                Directory.Move(item.Path, dest);
-            else
-                File.Move(item.Path, dest);
-            UndoStack.Push(new RenameOp(item.Path, dest));
+            var isDirectory = item.IsDirectory;
+            await FileWorker.RunAsync(0, () =>
+            {
+                if (isDirectory)
+                    Directory.Move(source, dest);
+                else
+                    File.Move(source, dest);
+                return true;
+            });
+            UndoStack.Push(new RenameOp(source, dest));
             StatusText = $"名前を変更しました: {newName}";
-            await RefreshColumnsAsync(new[] { dir });
         }
         catch (Exception ex)
         {
             StatusText = "名前を変更できませんでした: " + ex.Message;
+            return;
         }
+        finally
+        {
+            _fileOpGate.Release();
+        }
+        await RefreshColumnsAsync(new[] { dir });
     }
 
     private string _currentPath = "";
@@ -1579,8 +1596,25 @@ public class MainViewModel : ObservableObject
         }
         if (!await EnsureReachableAsync(files.Append(targetDir)))
             return;
-        var affected = FileOps.Transfer(files, targetDir, copy: !cut, out var error, out var performed);
-        PushTransferUndo(performed, copy: !cut);
+        var owner = FileOps.ActiveWindow();
+        IReadOnlyCollection<string> affected;
+        string? error;
+        await _fileOpGate.WaitAsync();
+        try
+        {
+            StatusText = cut ? "移動しています…" : "コピーしています…";
+            List<(string Source, string Dest)> performed;
+            (affected, error, performed) = await FileWorker.RunAsync(owner, () =>
+            {
+                var a = FileOps.Transfer(files, targetDir, copy: !cut, out var e, out var p);
+                return (a, e, p);
+            });
+            PushTransferUndo(performed, copy: !cut);
+        }
+        finally
+        {
+            _fileOpGate.Release();
+        }
         if (cut)
         {
             ClipboardOps.ClearAfterMove();
@@ -1601,43 +1635,50 @@ public class MainViewModel : ObservableObject
     }
 
     /// <summary>直前のファイル操作 (名前変更 / 移動 / コピー / 新規フォルダ / 削除) を取り消す。</summary>
-    public async Task UndoAsync()
-    {
-        if (UndoStack.PopUndo() is not { } op)
-        {
-            StatusText = "元に戻す操作はありません";
-            return;
-        }
-        var affected = op.Undo(out var error);
-        if (error is null)
-        {
-            UndoStack.PushRedo(op.Inverse());
-            StatusText = $"元に戻しました: {op.Description}";
-        }
-        else
-        {
-            StatusText = error;
-        }
-        await RefreshColumnsAsync(affected);
-    }
+    public Task UndoAsync() => UndoOrRedoAsync(redo: false);
 
     /// <summary>取り消した操作をやり直す (Ctrl+Shift+Z / Ctrl+Y)。</summary>
-    public async Task RedoAsync()
+    public Task RedoAsync() => UndoOrRedoAsync(redo: true);
+
+    /// <summary>取り消し / やり直しの本体 (移動・ごみ箱からの復元) を専用スレッドで実行する。
+    /// 実行中のファイル操作があれば、それが終わって履歴が積まれてから取り出す
+    /// (先に取り出すと、コピー中の Ctrl+Z が一つ前の操作を取り消してしまう)。</summary>
+    private async Task UndoOrRedoAsync(bool redo)
     {
-        if (UndoStack.PopRedo() is not { } op)
+        var owner = FileOps.ActiveWindow();
+        IReadOnlyCollection<string> affected;
+        await _fileOpGate.WaitAsync();
+        try
         {
-            StatusText = "やり直す操作はありません";
-            return;
+            if ((redo ? UndoStack.PopRedo() : UndoStack.PopUndo()) is not { } op)
+            {
+                StatusText = redo ? "やり直す操作はありません" : "元に戻す操作はありません";
+                return;
+            }
+            StatusText = redo ? "やり直しています…" : "元に戻しています…";
+            string? error;
+            (affected, error) = await FileWorker.RunAsync(owner, () =>
+            {
+                var a = op.Undo(out var e);
+                return (a, e);
+            });
+            if (error is null)
+            {
+                // Inverse は Undo の実行後に呼ぶ規約 (RecycleOp は実行時の記録から逆操作を組む)
+                if (redo)
+                    UndoStack.PushUndoKeepRedo(op.Inverse());
+                else
+                    UndoStack.PushRedo(op.Inverse());
+                StatusText = redo ? $"やり直しました: {op.Description}" : $"元に戻しました: {op.Description}";
+            }
+            else
+            {
+                StatusText = error;
+            }
         }
-        var affected = op.Undo(out var error);
-        if (error is null)
+        finally
         {
-            UndoStack.PushUndoKeepRedo(op.Inverse());
-            StatusText = $"やり直しました: {op.Description}";
-        }
-        else
-        {
-            StatusText = error;
+            _fileOpGate.Release();
         }
         await RefreshColumnsAsync(affected);
     }
@@ -1661,61 +1702,86 @@ public class MainViewModel : ObservableObject
         if (!await EnsureReachableAsync(paths))
             return;
 
-        if (permanent)
+        await _fileOpGate.WaitAsync();
+        try
         {
-            var affected = FileOps.Delete(paths, permanent: true, ownerHwnd, out var error);
-            StatusText = error ?? $"削除しました: {paths.Count} 個";
-            await RefreshColumnsAsync(affected);
-            return;
-        }
+            StatusText = "削除しています…";
+            if (permanent)
+            {
+                var (affected, error) = await FileWorker.RunAsync(ownerHwnd, () =>
+                {
+                    var a = FileOps.Delete(paths, permanent: true, ownerHwnd, out var e);
+                    return (a, e);
+                });
+                StatusText = error ?? $"削除しました: {paths.Count} 個";
+                await RefreshColumnsAsync(affected);
+                return;
+            }
 
-        // 通常は 1 フォルダ内の選択なのでどちらか一方だけになる
-        var recyclable = paths.Where(FileOps.SupportsRecycleBin).ToList();
-        var trashable = paths.Where(p => !FileOps.SupportsRecycleBin(p)).ToList();
-        var affectedAll = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            // 通常は 1 フォルダ内の選択なのでどちらか一方だけになる
+            var recyclable = paths.Where(FileOps.SupportsRecycleBin).ToList();
+            var trashable = paths.Where(p => !FileOps.SupportsRecycleBin(p)).ToList();
+            var useAppTrash = _settings.UseAppTrash;
+            var r = await FileWorker.RunAsync(ownerHwnd, () => DeleteCore(recyclable, trashable, useAppTrash, ownerHwnd));
+
+            // 取り消し履歴は UI スレッドで積む (UndoStack は全ウィンドウ共有)
+            if (r.Recycled)
+                UndoStack.Push(new RestoreOp(recyclable, "削除"));
+            if (r.Trashed.Count > 0)
+                UndoStack.Push(new MoveOp(r.Trashed, "削除"));
+
+            var done = (r.Recycled ? recyclable.Count : 0) + r.Trashed.Count;
+            StatusText = r.Error ?? (r.PermanentDone > 0 && done == 0
+                ? $"削除しました: {r.PermanentDone} 個"
+                : $"ごみ箱へ移動しました: {done} 個");
+            await RefreshColumnsAsync(r.Affected);
+        }
+        finally
+        {
+            _fileOpGate.Release();
+        }
+    }
+
+    private sealed record DeleteResult(
+        HashSet<string> Affected, string? Error, bool Recycled,
+        List<(string Source, string Dest)> Trashed, int PermanentDone);
+
+    /// <summary>削除の本体 (専用スレッドで実行)。ごみ箱の無い場所 (NAS 等) は退避ごみ箱へ。</summary>
+    private static DeleteResult DeleteCore(
+        List<string> recyclable, List<string> trashable, bool useAppTrash, nint ownerHwnd)
+    {
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string? err = null;
-        var done = 0;
+        var recycled = false;
+        var trashed = new List<(string Source, string Dest)>();
+        var permanentDone = 0;
 
         if (recyclable.Count > 0)
         {
-            affectedAll.UnionWith(FileOps.Delete(recyclable, permanent: false, ownerHwnd, out var e));
+            affected.UnionWith(FileOps.Delete(recyclable, permanent: false, ownerHwnd, out var e));
             err ??= e;
-            if (e is null)
-            {
-                UndoStack.Push(new RestoreOp(recyclable, "削除"));
-                done += recyclable.Count;
-            }
+            recycled = e is null;
         }
-        var permanentDone = 0;
         if (trashable.Count > 0)
         {
-            if (_settings.UseAppTrash)
+            if (useAppTrash)
             {
-                var performed = FileOps.MoveToAppTrash(trashable, out var e);
+                trashed = FileOps.MoveToAppTrash(trashable, out var e);
                 err ??= e;
-                foreach (var (source, _) in performed)
+                foreach (var (source, _) in trashed)
                     if (Path.GetDirectoryName(source) is { } dir)
-                        affectedAll.Add(dir);
-                if (performed.Count > 0)
-                {
-                    UndoStack.Push(new MoveOp(performed, "削除"));
-                    done += performed.Count;
-                }
+                        affected.Add(dir);
             }
             else
             {
                 // 退避を使わない設定: シェルに任せる (ごみ箱が無い場所なので完全削除の警告が出る)
-                affectedAll.UnionWith(FileOps.Delete(trashable, permanent: false, ownerHwnd, out var e));
+                affected.UnionWith(FileOps.Delete(trashable, permanent: false, ownerHwnd, out var e));
                 err ??= e;
                 if (e is null)
                     permanentDone += trashable.Count;
             }
         }
-
-        StatusText = err ?? (permanentDone > 0 && done == 0
-            ? $"削除しました: {permanentDone} 個"
-            : $"ごみ箱へ移動しました: {done} 個");
-        await RefreshColumnsAsync(affectedAll);
+        return new DeleteResult(affected, err, recycled, trashed, permanentDone);
     }
 
     /// <summary>現在のフォルダに新しいフォルダを作る。既定名の重複は連番を付ける。</summary>
@@ -1743,20 +1809,29 @@ public class MainViewModel : ObservableObject
         try
         {
             var path = Path.Combine(parent, name);
-            // 確認と作成は裏で (遅い共有で UI を止めない)
-            var created = await Task.Run(() =>
+            // 確認と作成は裏で (遅い共有で UI を止めない)。取り消し履歴の順序を保つため、
+            // 他のファイル操作とは順番に通す
+            await _fileOpGate.WaitAsync();
+            try
             {
-                if (Directory.Exists(path) || File.Exists(path))
-                    return false;
-                Directory.CreateDirectory(path);
-                return true;
-            });
-            if (!created)
-            {
-                StatusText = $"『{name}』は既に存在します";
-                return;
+                var created = await Task.Run(() =>
+                {
+                    if (Directory.Exists(path) || File.Exists(path))
+                        return false;
+                    Directory.CreateDirectory(path);
+                    return true;
+                });
+                if (!created)
+                {
+                    StatusText = $"『{name}』は既に存在します";
+                    return;
+                }
+                UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダ"));
             }
-            UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダ"));
+            finally
+            {
+                _fileOpGate.Release();
+            }
             StatusText = $"フォルダを作成しました: {name}";
             await RefreshColumnsAsync(new[] { parent });
 
@@ -1780,12 +1855,34 @@ public class MainViewModel : ObservableObject
         if (!await EnsureReachableAsync(sources.Append(targetDir)))
             return;
         bool copy = mode == DropMode.Copy;
-        var affected = mode == DropMode.Link
-            ? FileOps.CreateShortcuts(sources, targetDir, out var error, out var performed)
-            : FileOps.Transfer(sources, targetDir, copy, out error, out performed);
-        // リンクもコピーと同じく「作られたものを消す」ことで元に戻せる
-        PushTransferUndo(performed, copy: mode != DropMode.Move,
-                         label: mode == DropMode.Link ? "ショートカット作成" : "コピー");
+        var owner = FileOps.ActiveWindow();
+        IReadOnlyCollection<string> affected;
+        string? error;
+        List<(string Source, string Dest)> performed;
+        await _fileOpGate.WaitAsync();
+        try
+        {
+            StatusText = mode switch
+            {
+                DropMode.Link => "ショートカットを作成しています…",
+                DropMode.Copy => "コピーしています…",
+                _ => "移動しています…",
+            };
+            (affected, error, performed) = await FileWorker.RunAsync(owner, () =>
+            {
+                var a = mode == DropMode.Link
+                    ? FileOps.CreateShortcuts(sources, targetDir, out var e, out var p)
+                    : FileOps.Transfer(sources, targetDir, copy, out e, out p);
+                return (a, e, p);
+            });
+            // リンクもコピーと同じく「作られたものを消す」ことで元に戻せる
+            PushTransferUndo(performed, copy: mode != DropMode.Move,
+                             label: mode == DropMode.Link ? "ショートカット作成" : "コピー");
+        }
+        finally
+        {
+            _fileOpGate.Release();
+        }
         if (error is not null)
             StatusText = error;
         else if (performed.Count > 0)

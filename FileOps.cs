@@ -92,7 +92,7 @@ public static class FileOps
         }
 
         // 全項目を 1 回のシェル操作にまとめる (上書き確認の「すべてに適用」が全体に効く)
-        performed = ShellFileOperation.Run(items, copy, GetActiveWindow(), out var shellError);
+        performed = ShellFileOperation.Run(items, copy, OwnerWindow(), out var shellError);
         error = shellError ?? error;
         if (!copy)
             foreach (var (source, _) in performed)
@@ -110,11 +110,19 @@ public static class FileOps
         var items = moves
             .Select(m => new ShellFileOperation.Item(m.From, Path.GetDirectoryName(m.To) ?? m.To, Path.GetFileName(m.To)))
             .ToList();
-        return ShellFileOperation.Run(items, copy: false, GetActiveWindow(), out error);
+        return ShellFileOperation.Run(items, copy: false, OwnerWindow(), out error);
     }
 
     [DllImport("user32.dll")]
     private static extern nint GetActiveWindow();
+
+    /// <summary>このスレッドのアクティブなウィンドウ。UI スレッドで呼び、
+    /// <see cref="FileWorker.RunAsync"/> にシェルのダイアログの親として渡す。</summary>
+    public static nint ActiveWindow() => GetActiveWindow();
+
+    /// <summary>シェルのダイアログの親。専用スレッドで実行中なら呼び出し元から預かったウィンドウ
+    /// (GetActiveWindow はスレッドごとなので、専用スレッドでは 0 になる)。</summary>
+    private static nint OwnerWindow() => FileWorker.Owner != 0 ? FileWorker.Owner : GetActiveWindow();
 
     /// <summary>「名前 - コピー.ext」「名前 - コピー (2).ext」… の空き名を返す。</summary>
     private static string UniqueCopyName(string dir, string name, bool isDir)
@@ -184,7 +192,11 @@ public static class FileOps
                         File.GetAttributes(trashRoot) | FileAttributes.Hidden | FileAttributes.System);
                 }
                 catch { /* 属性を付けられなくても続行 */ }
-                AppSettings.Current.RegisterTrashRoot(group.Key); // 起動時の掃除の巡回先として記録
+                // 起動時の掃除の巡回先として記録。削除は専用スレッドで走るので、
+                // 設定の書き換えは UI スレッドに回す (他の設定変更と同時に保存しない)
+                var key = group.Key;
+                System.Windows.Application.Current?.Dispatcher.BeginInvoke(
+                    () => AppSettings.Current.RegisterTrashRoot(key));
             }
             catch (Exception)
             {
@@ -319,7 +331,7 @@ public static class FileOps
 
         var op = new SHFILEOPSTRUCTW
         {
-            hwnd = ownerHwnd,
+            hwnd = ownerHwnd != 0 ? ownerHwnd : FileWorker.Owner,
             wFunc = FO_DELETE,
             // 複数パスは NUL 区切り + 二重 NUL 終端
             pFrom = string.Join('\0', paths) + "\0\0",
