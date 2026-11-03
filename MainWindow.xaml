@@ -257,6 +257,10 @@
                             <DataTrigger Binding="{Binding ClipMark}" Value="Cut">
                                 <Setter Property="Opacity" Value="0.45"/>
                             </DataTrigger>
+                            <!-- 届かないネットワーク上のお気に入りも薄く (選べば開きに行く) -->
+                            <DataTrigger Binding="{Binding IsUnreachable}" Value="True">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </DataTrigger>
                         </Style.Triggers>
                     </Style>
                 </Grid.Style>
