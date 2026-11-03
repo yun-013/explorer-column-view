@@ -85,10 +85,30 @@ public class MainViewModel : ObservableObject
         PushHistory(tab, parent);
     }
 
+    /// <summary>ファイル操作の前に、関わる共有に届くかを確かめる。ファイル操作そのものは
+    /// UI スレッドで同期的に走るため、届かない共有が混ざっていると数十秒固まる。
+    /// 届かなければ操作をやめて理由をステータスに出し、false を返す。</summary>
+    private async Task<bool> EnsureReachableAsync(IEnumerable<string> paths)
+    {
+        var shares = paths.Where(Reachability.IsNetworkPath)
+            .Select(p => Reachability.ShareRoot(p) ?? p)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (shares.Count == 0)
+            return true;
+        var reachable = await Task.WhenAll(shares.Select(s => Reachability.IsReachableAsync(s)));
+        if (shares.Where((_, i) => !reachable[i]).FirstOrDefault() is not { } unreachable)
+            return true;
+        StatusText = $"接続先に届かないため、操作をやめました: {unreachable}";
+        return false;
+    }
+
     public async Task RenameAsync(FileSystemItem item, string newName)
     {
         newName = newName.Trim();
         if (string.IsNullOrEmpty(newName) || newName == item.Name)
+            return;
+        if (!await EnsureReachableAsync(new[] { item.Path }))
             return;
         var dir = Path.GetDirectoryName(item.Path);
         if (dir is null)
@@ -111,16 +131,21 @@ public class MainViewModel : ObservableObject
     }
 
     private string _currentPath = "";
-    public string CurrentPath
+    public string CurrentPath => _currentPath;
+
+    /// <summary>CurrentPath がフォルダか (false ならファイル)。項目を選んだ時点で分かっているので、
+    /// 星ボタンやパンくずのためにファイルシステムへ聞き直さない — 届かない共有だと
+    /// その存在確認が UI スレッドで数十秒止まる。</summary>
+    private bool _currentIsDirectory = true;
+
+    private void SetCurrentPath(string path, bool isDirectory)
     {
-        get => _currentPath;
-        set
+        var directoryChanged = _currentIsDirectory != isDirectory;
+        _currentIsDirectory = isDirectory;
+        if (Set(ref _currentPath, path, nameof(CurrentPath)) || directoryChanged)
         {
-            if (Set(ref _currentPath, value))
-            {
-                Raise(nameof(IsCurrentFavorite));
-                BuildBreadcrumbs();
-            }
+            Raise(nameof(IsCurrentFavorite));
+            BuildBreadcrumbs();
         }
     }
 
@@ -144,7 +169,7 @@ public class MainViewModel : ObservableObject
         if (string.IsNullOrEmpty(path))
             return;
 
-        var dir = Directory.Exists(path) ? path : (Path.GetDirectoryName(path) ?? path);
+        var dir = _currentIsDirectory ? path : (Path.GetDirectoryName(path) ?? path);
         var root = Path.GetPathRoot(dir);
         if (string.IsNullOrEmpty(root))
             return;
@@ -272,23 +297,30 @@ public class MainViewModel : ObservableObject
 
     // ---- お気に入り ----
 
-    /// <summary>お気に入り登録対象 (現在のパスがファイルなら親フォルダ)</summary>
+    /// <summary>お気に入り登録対象 (現在のパスがファイルなら親フォルダ)。
+    /// バインディング経由で UI スレッドから頻繁に読まれるので、ファイルシステムには触れない。</summary>
     public string? FavoriteTarget
     {
         get
         {
             if (string.IsNullOrEmpty(CurrentPath))
                 return null;
-            if (Directory.Exists(CurrentPath))
-                return Path.GetFullPath(CurrentPath);
-            if (File.Exists(CurrentPath))
-                return Path.GetDirectoryName(CurrentPath);
-            return null;
+            try
+            {
+                return _currentIsDirectory ? Path.GetFullPath(CurrentPath) : Path.GetDirectoryName(CurrentPath);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 
     public bool IsCurrentFavorite
         => FavoriteTarget is { } target && _settings.IsFavorite(target);
+
+    /// <summary>お気に入りに登録済みか (文字列で比べるだけで、ファイルシステムには触れない)。</summary>
+    public bool IsFavoritePath(string path) => _settings.IsFavorite(path);
 
     public async Task ToggleFavoriteAsync(string? path)
     {
@@ -298,14 +330,25 @@ public class MainViewModel : ObservableObject
             StatusText = "お気に入りに登録できるのはフォルダのみです";
             return;
         }
-        if (File.Exists(path))
-            path = Path.GetDirectoryName(path);
-        if (path is null || !Directory.Exists(path))
-            return;
 
-        var added = _settings.ToggleFavorite(Path.GetFullPath(path));
+        // 登録済みなら存在を確かめずに外す (届かない共有のお気に入りも外せるように)
+        var full = Path.GetFullPath(path);
+        if (!_settings.IsFavorite(full))
+        {
+            // 追加はフォルダに限る。存在確認は届かない共有だと数十秒かかるので裏で行う
+            var folder = await Task.Run(() =>
+                Directory.Exists(full) ? full : File.Exists(full) ? Path.GetDirectoryName(full) : null);
+            if (folder is null)
+            {
+                StatusText = $"お気に入りに追加できませんでした (フォルダが見つかりません): {path}";
+                return;
+            }
+            full = folder; // ファイルなら親フォルダを対象にする (登録済みなら外す)
+        }
+
+        var added = _settings.ToggleFavorite(full);
         Raise(nameof(IsCurrentFavorite));
-        StatusText = added ? $"お気に入りに追加: {path}" : $"お気に入りから削除: {path}";
+        StatusText = added ? $"お気に入りに追加: {full}" : $"お気に入りから削除: {full}";
         await RefreshGroupColumnsAsync();
     }
 
@@ -329,13 +372,42 @@ public class MainViewModel : ObservableObject
     public IEnumerable<(FavoriteGroup Group, int Depth)> GroupsExcept(string id)
         => _settings.EnumerateGroupsExcept(id);
 
+    /// <summary>UI スレッドから使うフォルダの存在確認。確認は裏で行い、届かない共有は
+    /// 短い時間で諦めて false を返す (UI スレッドで Directory.Exists すると数十秒固まる)。</summary>
+    private static async Task<bool> DirectoryExistsAsync(string path)
+    {
+        if (Reachability.IsNetworkPath(path) && !await Reachability.IsReachableAsync(path))
+            return false;
+        return await Task.Run(() => Directory.Exists(path));
+    }
+
+    /// <summary>フォルダが消えたと言えるか。共有ごと届かないときは「消えた」とは見なさない
+    /// (列は残して、読み込み側の「接続先に届きません」に任せる)。同期版は裏スレッドから呼ぶこと
+    /// (届かない共有の確認を最長 <see cref="Reachability.DefaultTimeout"/> だけ待つ)。</summary>
+    private static bool IsFolderGone(string path)
+    {
+        if (Reachability.IsNetworkPath(path) && !Reachability.IsReachableAsync(path).GetAwaiter().GetResult())
+            return false;
+        return !Directory.Exists(path);
+    }
+
+    private static Task<bool> IsFolderGoneAsync(string path) => Task.Run(() => IsFolderGone(path));
+
+    /// <summary>存在するフォルダだけを元の順で返す (並行に確かめる)。</summary>
+    private static async Task<List<string>> ExistingDirectoriesAsync(IEnumerable<string> paths)
+    {
+        var list = paths.ToList();
+        var exists = await Task.WhenAll(list.Select(DirectoryExistsAsync));
+        return list.Where((_, i) => exists[i]).ToList();
+    }
+
     /// <summary>グループ配下 (サブグループ含む) の全フォルダをそれぞれ新しいタブで開く。</summary>
     public async Task OpenGroupAsync(string id)
     {
         var group = _settings.FindGroup(id);
         if (group is null)
             return;
-        var paths = _settings.CollectPaths(id).Where(Directory.Exists).ToList();
+        var paths = await ExistingDirectoriesAsync(_settings.CollectPaths(id));
         if (paths.Count == 0)
         {
             StatusText = $"『{group.Name}』に開けるフォルダがありません";
@@ -352,7 +424,7 @@ public class MainViewModel : ObservableObject
         var group = _settings.FindGroup(id);
         if (group is null)
             return;
-        var paths = group.Paths.Where(Directory.Exists).ToList();
+        var paths = await ExistingDirectoriesAsync(group.Paths);
         if (paths.Count == 0)
         {
             StatusText = $"『{group.Name}』の直下に開けるフォルダがありません";
@@ -441,8 +513,8 @@ public class MainViewModel : ObservableObject
         if (_settings.FindGroup(id) is not { } group)
             return;
         var added = 0;
-        foreach (var path in paths)
-            if (Directory.Exists(path) && _settings.AddToGroup(id, path))
+        foreach (var path in await ExistingDirectoriesAsync(paths))
+            if (_settings.AddToGroup(id, path))
                 added++;
         StatusText = added > 0
             ? $"『{group.Name}』に {added} 個のフォルダを追加しました"
@@ -491,10 +563,12 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>現在開いている各タブのルートフォルダ一覧 (ホームタブは除外)。</summary>
+    /// <summary>現在開いている各タブのルートフォルダ一覧 (ホームタブは除外)。
+    /// メニューを開くたびに UI スレッドで呼ばれるので、存在確認はしない
+    /// (開いているタブの列なので存在する前提。届かないと分かっている共有だけ外す)。</summary>
     public List<string> OpenTabRoots()
         => Tabs.Select(t => t.Columns.FirstOrDefault()?.Path)
-            .Where(p => p is not null && Directory.Exists(p!))
+            .Where(p => p is not null && !Reachability.IsKnownUnreachable(p))
             .Select(p => p!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
@@ -573,7 +647,7 @@ public class MainViewModel : ObservableObject
         _searchCts = cts;
         column.SearchCts = cts; // 列が閉じられたら (ナビゲーション等) 走査も止まる
         tab.Columns.Add(column);
-        CurrentPath = scope;
+        SetCurrentPath(scope, isDirectory: true);
         StatusText = $"検索中… ({scope})";
 
         await RunSearchAsync(column, scope, query, ShowHidden, CurrentComparison, cts.Token);
@@ -852,7 +926,7 @@ public class MainViewModel : ObservableObject
                 }
                 else
                 {
-                    if (desc.Path is { } path && !Directory.Exists(path))
+                    if (desc.Path is { } path && await IsFolderGoneAsync(path))
                         break;
                     column = new ColumnModel(desc.Path);
                 }
@@ -932,7 +1006,7 @@ public class MainViewModel : ObservableObject
         {
             if (desc.GroupId is { } gid && _settings.FindGroup(gid) is null)
                 break;
-            if (desc is { GroupId: null, Path: { } path } && !Directory.Exists(path))
+            if (desc is { GroupId: null, Path: { } path } && IsFolderGone(path))
                 break;
             plan.Add(new SessionColumn { Path = desc.Path, GroupId = desc.GroupId, Selected = desc.Selected });
         }
@@ -1090,13 +1164,15 @@ public class MainViewModel : ObservableObject
     /// <summary>直前に閉じたタブをこのウィンドウの元の位置に開き直す (別ウィンドウで
     /// 閉じたものは位置が丸められる)。消えたフォルダから右は落とし、起点ごと消えていた
     /// 控えは捨ててさらに前の控えへさかのぼる (控えが尽きたら何もしない)。</summary>
-    public void ReopenClosedTab()
+    public async Task ReopenClosedTabAsync()
     {
         while (_closedTabs.Count > 0)
         {
             var (columns, index) = _closedTabs[^1];
             _closedTabs.RemoveAt(_closedTabs.Count - 1);
-            if (RestoreTab(TrimToAvailable(columns), index) is not { } tab)
+            // 存在確認は裏で (届かない共有で UI を止めない)
+            var plan = await Task.Run(() => TrimToAvailable(columns));
+            if (RestoreTab(plan, index) is not { } tab)
                 continue;
             ActiveTab = tab; // 列の読み込みはセッション復元と同じく展開に任せる
             return;
@@ -1132,7 +1208,7 @@ public class MainViewModel : ObservableObject
             tab.Columns.Add(column);
             await column.LoadAsync(ShowHidden, CurrentComparison);
             tab.Title = path is null ? "ホーム" : TrimTitle(Path.GetFileName(path.TrimEnd('\\')) is { Length: > 0 } n ? n : path);
-            CurrentPath = path ?? "";
+            SetCurrentPath(path ?? "", isDirectory: true);
             UpdateStatus(column);
         }
         finally
@@ -1144,7 +1220,14 @@ public class MainViewModel : ObservableObject
     public async Task NavigateToPathAsync(string path)
     {
         path = Environment.ExpandEnvironmentVariables(path.Trim().Trim('"'));
-        if (ActiveTab is null || !Directory.Exists(path))
+        if (ActiveTab is null)
+            return;
+        if (Reachability.IsNetworkPath(path) && !await Reachability.IsReachableAsync(path))
+        {
+            StatusText = $"接続先に届きません: {path}";
+            return;
+        }
+        if (!await Task.Run(() => Directory.Exists(path)))
         {
             StatusText = $"フォルダが見つかりません: {path}";
             return;
@@ -1209,14 +1292,14 @@ public class MainViewModel : ObservableObject
         // 先頭列ごと消えていたら、残っている一番近い親 (無ければホーム) から作り直す
         for (var i = 0; i < tab.Columns.Count; i++)
         {
-            if (tab.Columns[i].Path is not { } path || Directory.Exists(path))
+            if (tab.Columns[i].Path is not { } path || !await IsFolderGoneAsync(path))
                 continue;
             if (i > 0)
             {
                 TrimColumns(tab, i);
                 break;
             }
-            var fallback = NearestExistingAncestor(path);
+            var fallback = await Task.Run(() => NearestExistingAncestor(path));
             await ResetTabAsync(tab, fallback);
             PushHistory(tab, fallback);
             StatusText = $"フォルダが見つかりません: {path}";
@@ -1267,7 +1350,7 @@ public class MainViewModel : ObservableObject
                 scope = path;
                 break;
             }
-        if (string.IsNullOrEmpty(column.SearchQuery) || scope is null || !Directory.Exists(scope))
+        if (string.IsNullOrEmpty(column.SearchQuery) || scope is null || !await DirectoryExistsAsync(scope))
             return;
 
         _searchCts?.Cancel();
@@ -1279,9 +1362,12 @@ public class MainViewModel : ObservableObject
         await RunSearchAsync(column, scope, column.SearchQuery, ShowHidden, CurrentComparison, cts.Token);
     }
 
-    /// <summary>実在する一番近い親フォルダ。どこまでたどっても無ければ null (= ホーム)。</summary>
+    /// <summary>実在する一番近い親フォルダ。どこまでたどっても無ければ null (= ホーム)。
+    /// 届かない共有の存在確認は待つので、裏スレッドから呼ぶこと。</summary>
     private static string? NearestExistingAncestor(string path)
     {
+        if (Reachability.IsKnownUnreachable(path))
+            return null;
         for (var dir = Path.GetDirectoryName(path); dir is not null; dir = Path.GetDirectoryName(dir))
             if (Directory.Exists(dir))
                 return dir;
@@ -1334,7 +1420,7 @@ public class MainViewModel : ObservableObject
             return;
         }
 
-        CurrentPath = item.Path;
+        SetCurrentPath(item.Path, item.IsDirectory);
 
         if (item.IsDirectory)
         {
@@ -1406,6 +1492,12 @@ public class MainViewModel : ObservableObject
             if (item.IsDisconnectedDrive)
             {
                 _ = ConnectDriveAsync(item);
+                return;
+            }
+            // ShellExecute は UI スレッドで対象に問い合わせるので、届かないと分かっている共有は開きに行かない
+            if (Reachability.IsKnownUnreachable(item.Path))
+            {
+                StatusText = $"接続先に届きません: {item.Path}";
                 return;
             }
             Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
@@ -1485,6 +1577,8 @@ public class MainViewModel : ObservableObject
             StatusText = "貼り付けるファイルがありません";
             return;
         }
+        if (!await EnsureReachableAsync(files.Append(targetDir)))
+            return;
         var affected = FileOps.Transfer(files, targetDir, copy: !cut, out var error, out var performed);
         PushTransferUndo(performed, copy: !cut);
         if (cut)
@@ -1564,6 +1658,8 @@ public class MainViewModel : ObservableObject
     {
         if (paths.Count == 0)
             return;
+        if (!await EnsureReachableAsync(paths))
+            return;
 
         if (permanent)
         {
@@ -1627,6 +1723,11 @@ public class MainViewModel : ObservableObject
     {
         if (FavoriteTarget is not { } parent)
             return null;
+        if (Reachability.IsKnownUnreachable(parent))
+        {
+            StatusText = $"接続先に届きません: {parent}";
+            return null;
+        }
         var name = "新しいフォルダ";
         var n = 2;
         while (Directory.Exists(Path.Combine(parent, name)) || File.Exists(Path.Combine(parent, name)))
@@ -1642,12 +1743,19 @@ public class MainViewModel : ObservableObject
         try
         {
             var path = Path.Combine(parent, name);
-            if (Directory.Exists(path) || File.Exists(path))
+            // 確認と作成は裏で (遅い共有で UI を止めない)
+            var created = await Task.Run(() =>
+            {
+                if (Directory.Exists(path) || File.Exists(path))
+                    return false;
+                Directory.CreateDirectory(path);
+                return true;
+            });
+            if (!created)
             {
                 StatusText = $"『{name}』は既に存在します";
                 return;
             }
-            Directory.CreateDirectory(path);
             UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダ"));
             StatusText = $"フォルダを作成しました: {name}";
             await RefreshColumnsAsync(new[] { parent });
@@ -1656,8 +1764,8 @@ public class MainViewModel : ObservableObject
             var column = ActiveTab?.Columns.FirstOrDefault(
                 c => string.Equals(c.Path, parent, StringComparison.OrdinalIgnoreCase));
             if (column?.Items.FirstOrDefault(
-                    i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase)) is { } created)
-                column.SelectedItem = created;
+                    i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase)) is { } createdItem)
+                column.SelectedItem = createdItem;
         }
         catch (Exception ex)
         {
@@ -1669,6 +1777,8 @@ public class MainViewModel : ObservableObject
 
     public async Task HandleDropAsync(string[] sources, string targetDir, DropMode mode)
     {
+        if (!await EnsureReachableAsync(sources.Append(targetDir)))
+            return;
         bool copy = mode == DropMode.Copy;
         var affected = mode == DropMode.Link
             ? FileOps.CreateShortcuts(sources, targetDir, out var error, out var performed)
@@ -1723,7 +1833,10 @@ public class MainViewModel : ObservableObject
         if (ActiveTab is null)
             return;
         var deepest = ActiveTab.Columns.LastOrDefault();
-        CurrentPath = deepest?.SelectedItem?.Path ?? deepest?.Path ?? "";
+        if (deepest?.SelectedItem is { } selected)
+            SetCurrentPath(selected.Path, selected.IsDirectory);
+        else
+            SetCurrentPath(deepest?.Path ?? "", isDirectory: true);
     }
 
     private void UpdateStatus(ColumnModel column)

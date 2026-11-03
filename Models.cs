@@ -141,8 +141,33 @@ public class FileSystemItem : ObservableObject
     private ImageSource? GenericIcon => IconPreloaded
         ? IconCache.GetByExtension(null, isDirectory: true)
         : UseRealIcon
-            ? IconCache.GetByPath(Path)
+            ? RealIconOrPlaceholder()
             : IconCache.GetByExtension(IsDirectory ? null : System.IO.Path.GetExtension(Name), IsDirectory);
+
+    private bool _realIconRequested;
+
+    /// <summary>実パスのアイコン。取得済みならそれを、まだなら汎用アイコンを返して裏で取りに行く。
+    /// このゲッターはバインディング経由で UI スレッドから呼ばれるので、実パスへの問い合わせ
+    /// (届かない共有だと数十秒、ローカルでも初回は 1 件数十〜百 ms) をここではしない。</summary>
+    private ImageSource? RealIconOrPlaceholder()
+    {
+        if (IconCache.TryGetCached(Path, out var cached))
+            return cached ?? IconCache.GetByExtension(null, IsDirectory);
+        if (!_realIconRequested)
+        {
+            _realIconRequested = true;
+            var path = Path;
+            _ = Task.Run(() =>
+            {
+                // 届かないと分かっている共有には問い合わせない (汎用アイコンのまま)
+                if (Reachability.IsKnownUnreachable(path))
+                    return;
+                if (IconCache.GetByPath(path) is { } icon)
+                    ApplyRealIcon(icon);
+            });
+        }
+        return IconCache.GetByExtension(null, IsDirectory);
+    }
 
     /// <summary>実ファイルのアイコン (.exe の埋め込みアイコン等) を後から差し替える。</summary>
     public void ApplyRealIcon(ImageSource icon)
@@ -581,6 +606,12 @@ public class ColumnModel : ObservableObject, IDisposable
         {
             items = await Task.Run(BuildHomeItems);
         }
+        else if (Reachability.IsNetworkPath(Path) && !await Reachability.IsReachableAsync(Path))
+        {
+            // 届かない共有の列挙は数十秒返ってこないので、短い確認で見切る (F5 で再試行できる)
+            Error = $"接続先に届きません: {Reachability.ShareRoot(Path) ?? Path}";
+            items = new();
+        }
         else
         {
             try
@@ -801,7 +832,19 @@ public class ColumnModel : ObservableObject, IDisposable
         if (group is null)
             return items;
 
-        foreach (var key in AppSettings.Current.OrderedChildKeys(group))
+        // メンバーの存在確認 (実アイコンを使えるか)。ネットワーク上のものは届かないと
+        // 数十秒返ってこないので、まとめて並行に確かめて短い時間だけ待つ
+        var keys = AppSettings.Current.OrderedChildKeys(group).ToList();
+        var exists = keys
+            .Where(k => !k.StartsWith("group:", StringComparison.Ordinal))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(k => k, k => Reachability.IsNetworkPath(k)
+                ? Reachability.Probe("exists:" + k, () => Directory.Exists(k))
+                : Task.FromResult(Directory.Exists(k)), StringComparer.OrdinalIgnoreCase);
+        if (exists.Count > 0)
+            Task.WaitAll(exists.Values.ToArray(), Reachability.DefaultTimeout);
+
+        foreach (var key in keys)
         {
             if (key.StartsWith("group:", StringComparison.Ordinal))
             {
@@ -825,60 +868,13 @@ public class ColumnModel : ObservableObject, IDisposable
                     Path = key,
                     Name = string.IsNullOrEmpty(name) ? key : name,
                     IsDirectory = true,
-                    UseRealIcon = Directory.Exists(key),
+                    UseRealIcon = exists[key] is { IsCompleted: true, Result: true },
                     IsGroupMember = true,
                     GroupId = group.Id,
                 });
             }
         }
         return items;
-    }
-
-    /// <summary>ネットワーク上の場所の確認を待つ上限 (まとめて並行に待つ)。
-    /// 届かない共有の確認は数十秒返ってこないので、間に合わなければ「届かない」として並べる。</summary>
-    private static readonly TimeSpan NetworkProbeTimeout = TimeSpan.FromSeconds(1.5);
-
-    private static readonly Dictionary<string, Task<bool>> _networkProbes = new(StringComparer.OrdinalIgnoreCase);
-
-    /// <summary>ネットワーク上の場所の確認を裏で始める。同じ確認がまだ走っていればそれを使う
-    /// (新しいタブを開くたびに、届かない相手を待つスレッドが増えないように)。</summary>
-    private static Task<bool> ProbeNetwork(string key, Func<bool> probe)
-    {
-        lock (_networkProbes)
-        {
-            if (_networkProbes.TryGetValue(key, out var running))
-                return running;
-            var task = Task.Run(() =>
-            {
-                try
-                {
-                    return probe();
-                }
-                catch
-                {
-                    return false;
-                }
-            });
-            _networkProbes[key] = task;
-            task.ContinueWith(_ =>
-            {
-                lock (_networkProbes)
-                    _networkProbes.Remove(key);
-            }, TaskScheduler.Default);
-            return task;
-        }
-    }
-
-    /// <summary>共有のルート ("\\host\share" / "Z:\")。取れなければ null。</summary>
-    private static string? ShareRoot(string path)
-    {
-        if (path.StartsWith(@"\\", StringComparison.Ordinal))
-        {
-            var parts = path[2..].Split('\\', 3);
-            return parts.Length >= 2 && parts[0].Length > 0 && parts[1].Length > 0
-                ? $@"\\{parts[0]}\{parts[1]}" : null;
-        }
-        return System.IO.Path.GetPathRoot(path);
     }
 
     private static List<FileSystemItem> BuildHomeItems()
@@ -890,30 +886,24 @@ public class ColumnModel : ObservableObject, IDisposable
         // 数十秒返ってこず、ホーム列全体が「めくっています…」のまま止まる。
         // ここで全部まとめて並行に確かめ始め、短い時間だけ待つ。
         var drives = DriveInfo.GetDrives();
-        var networkRoots = new HashSet<string>(
-            drives.Where(d => d.DriveType == DriveType.Network).Select(d => d.RootDirectory.FullName),
-            StringComparer.OrdinalIgnoreCase);
-        bool IsNetworkPath(string path)
-            => path.StartsWith(@"\\", StringComparison.Ordinal)
-               || (System.IO.Path.GetPathRoot(path) is { } root && networkRoots.Contains(root));
-
         var probes = new Dictionary<string, Task<bool>>(StringComparer.OrdinalIgnoreCase);
         foreach (var key in homeKeys)
         {
-            if (key.StartsWith("group:", StringComparison.Ordinal) || !IsNetworkPath(key))
+            if (key.StartsWith("group:", StringComparison.Ordinal) || !Reachability.IsNetworkPath(key))
                 continue;
-            probes[key] = ProbeNetwork(key, () => Directory.Exists(key));
+            probes[key] = Reachability.Probe("exists:" + key, () => Directory.Exists(key));
             // フォルダが無いのか共有ごと届かないのかを見分けるため、共有のルートも確かめる
-            if (ShareRoot(key) is { } share)
-                probes[share] = ProbeNetwork(share, () => Directory.Exists(share));
+            // (結果は覚えておかれ、UI スレッド側のふるい分けにも使われる)
+            if (Reachability.ShareRoot(key) is { } share)
+                probes[share] = Reachability.ProbeShare(key);
         }
         foreach (var drive in drives)
         {
             if (drive.DriveType == DriveType.Network)
-                probes["ready:" + drive.Name] = ProbeNetwork("ready:" + drive.Name, () => drive.IsReady);
+                probes["ready:" + drive.Name] = Reachability.Probe("ready:" + drive.Name, () => drive.IsReady);
         }
         if (probes.Count > 0)
-            Task.WaitAll(probes.Values.ToArray(), NetworkProbeTimeout);
+            Task.WaitAll(probes.Values.ToArray(), Reachability.DefaultTimeout);
 
         // 確認が終わって true だったか (間に合わなかったものは届かない扱い)
         bool Probed(string key) => probes.TryGetValue(key, out var task) && task.IsCompleted && task.Result;
@@ -944,7 +934,7 @@ public class ColumnModel : ObservableObject, IDisposable
                     // 共有ごと届かない (確認が間に合わなかった) ものは消さずに薄く並べる
                     if (!Probed(key))
                     {
-                        if (ShareRoot(key) is { } share && Probed(share))
+                        if (Reachability.ShareRoot(key) is { } share && Probed(share))
                             continue;
                         unreachable = true;
                     }
