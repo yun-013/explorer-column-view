@@ -103,6 +103,10 @@ public class FileSystemItem : ObservableObject
     /// 開く前に繋ぎ直しが要る。</summary>
     public bool IsDisconnectedDrive { get; init; }
 
+    /// <summary>ホーム列のお気に入りのうち、ネットワーク上にあってホーム列を作る時点で
+    /// 届かなかった (または確認が間に合わなかった) もの。消さずに薄く並べ、選べば普通に開きに行く。</summary>
+    public bool IsUnreachable { get; init; }
+
     /// <summary>アイコンをホーム列の生成時 (バックグラウンド) に確定済みの項目。
     /// UI スレッドからシェルに問い合わせない — 切断中のネットワークドライブや
     /// 応答の遅いシェル拡張で描画が止まるのを避ける。</summary>
@@ -243,16 +247,18 @@ public class FileSystemItem : ObservableObject
         ? "ポータブル デバイス"
         : IsDisconnectedDrive
             ? "ネットワーク ドライブ (切断中)"
-            : IsDirectory
-                ? "ファイル フォルダ"
-                : IconCache.GetTypeName(System.IO.Path.GetExtension(Name));
+            : IsUnreachable
+                ? "ネットワーク上のフォルダ (接続できません)"
+                : IsDirectory
+                    ? "ファイル フォルダ"
+                    : IconCache.GetTypeName(System.IO.Path.GetExtension(Name));
 
-    /// <summary>種類の行はファイルのときだけ見せる (デバイス・切断中ドライブは状態を見せる)。</summary>
-    public Visibility TypeRowVisibility => IsDirectory && !IsDisconnectedDrive
+    /// <summary>種類の行はファイルのときだけ見せる (デバイス・切断中ドライブ・届かない場所は状態を見せる)。</summary>
+    public Visibility TypeRowVisibility => IsDirectory && !IsDisconnectedDrive && !IsUnreachable
         ? Visibility.Collapsed : Visibility.Visible;
 
-    /// <summary>サイズ / 更新日時の行。デバイスや切断中のドライブには当てはまらないので畳む。</summary>
-    public Visibility StatRowVisibility => IsShellDevice || IsDisconnectedDrive
+    /// <summary>サイズ / 更新日時の行。デバイスや切断中のドライブ・届かない場所には当てはまらないので畳む。</summary>
+    public Visibility StatRowVisibility => IsShellDevice || IsDisconnectedDrive || IsUnreachable
         ? Visibility.Collapsed : Visibility.Visible;
 
     public string ModifiedText => Modified.ToString("yyyy/MM/dd HH:mm");
@@ -319,8 +325,8 @@ public class FileSystemItem : ObservableObject
     /// <summary>フォルダの合計サイズをバックグラウンドで集計する (ホバー時に一度だけ)。</summary>
     public async Task EnsureFolderSizeAsync(CancellationToken ct)
     {
-        // 切断中のドライブは走査しても無駄 (繋ぎ直しの待ちを踏むだけ)
-        if (!IsDirectory || IsDisconnectedDrive || _folderSizeComputed)
+        // 切断中のドライブ・届かない場所は走査しても無駄 (接続先の待ちを踏むだけ)
+        if (!IsDirectory || IsDisconnectedDrive || IsUnreachable || _folderSizeComputed)
             return;
         _folderSizeComputed = true;
         try
@@ -601,7 +607,10 @@ public class ColumnModel : ObservableObject, IDisposable
         _iconCts = new CancellationTokenSource();
         _ = LoadIconsAsync(_iconCts.Token);
 
-        StartWatching();
+        // 読めなかったフォルダは監視しない (FileSystemWatcher は UI スレッドで存在確認をするので、
+        // 届かない場所だとそこで止まる)
+        if (Error is null)
+            StartWatching();
     }
 
     private CancellationTokenSource? _iconCts;
@@ -825,12 +834,92 @@ public class ColumnModel : ObservableObject, IDisposable
         return items;
     }
 
+    /// <summary>ネットワーク上の場所の確認を待つ上限 (まとめて並行に待つ)。
+    /// 届かない共有の確認は数十秒返ってこないので、間に合わなければ「届かない」として並べる。</summary>
+    private static readonly TimeSpan NetworkProbeTimeout = TimeSpan.FromSeconds(1.5);
+
+    private static readonly Dictionary<string, Task<bool>> _networkProbes = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>ネットワーク上の場所の確認を裏で始める。同じ確認がまだ走っていればそれを使う
+    /// (新しいタブを開くたびに、届かない相手を待つスレッドが増えないように)。</summary>
+    private static Task<bool> ProbeNetwork(string key, Func<bool> probe)
+    {
+        lock (_networkProbes)
+        {
+            if (_networkProbes.TryGetValue(key, out var running))
+                return running;
+            var task = Task.Run(() =>
+            {
+                try
+                {
+                    return probe();
+                }
+                catch
+                {
+                    return false;
+                }
+            });
+            _networkProbes[key] = task;
+            task.ContinueWith(_ =>
+            {
+                lock (_networkProbes)
+                    _networkProbes.Remove(key);
+            }, TaskScheduler.Default);
+            return task;
+        }
+    }
+
+    /// <summary>共有のルート ("\\host\share" / "Z:\")。取れなければ null。</summary>
+    private static string? ShareRoot(string path)
+    {
+        if (path.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            var parts = path[2..].Split('\\', 3);
+            return parts.Length >= 2 && parts[0].Length > 0 && parts[1].Length > 0
+                ? $@"\\{parts[0]}\{parts[1]}" : null;
+        }
+        return System.IO.Path.GetPathRoot(path);
+    }
+
     private static List<FileSystemItem> BuildHomeItems()
     {
         var items = new List<FileSystemItem>();
+        var homeKeys = AppSettings.Current.OrderedHomeKeys().ToList();
+
+        // ネットワーク上の場所 (UNC パス・ネットワークドライブ) は、届かないと存在確認が
+        // 数十秒返ってこず、ホーム列全体が「めくっています…」のまま止まる。
+        // ここで全部まとめて並行に確かめ始め、短い時間だけ待つ。
+        var drives = DriveInfo.GetDrives();
+        var networkRoots = new HashSet<string>(
+            drives.Where(d => d.DriveType == DriveType.Network).Select(d => d.RootDirectory.FullName),
+            StringComparer.OrdinalIgnoreCase);
+        bool IsNetworkPath(string path)
+            => path.StartsWith(@"\\", StringComparison.Ordinal)
+               || (System.IO.Path.GetPathRoot(path) is { } root && networkRoots.Contains(root));
+
+        var probes = new Dictionary<string, Task<bool>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var key in homeKeys)
+        {
+            if (key.StartsWith("group:", StringComparison.Ordinal) || !IsNetworkPath(key))
+                continue;
+            probes[key] = ProbeNetwork(key, () => Directory.Exists(key));
+            // フォルダが無いのか共有ごと届かないのかを見分けるため、共有のルートも確かめる
+            if (ShareRoot(key) is { } share)
+                probes[share] = ProbeNetwork(share, () => Directory.Exists(share));
+        }
+        foreach (var drive in drives)
+        {
+            if (drive.DriveType == DriveType.Network)
+                probes["ready:" + drive.Name] = ProbeNetwork("ready:" + drive.Name, () => drive.IsReady);
+        }
+        if (probes.Count > 0)
+            Task.WaitAll(probes.Values.ToArray(), NetworkProbeTimeout);
+
+        // 確認が終わって true だったか (間に合わなかったものは届かない扱い)
+        bool Probed(string key) => probes.TryGetValue(key, out var task) && task.IsCompleted && task.Result;
 
         // お気に入り＋トップレベルのグループ (統一並び順で最上段に表示)
-        foreach (var key in AppSettings.Current.OrderedHomeKeys())
+        foreach (var key in homeKeys)
         {
             if (key.StartsWith("group:", StringComparison.Ordinal))
             {
@@ -848,8 +937,22 @@ public class ColumnModel : ObservableObject, IDisposable
             }
             else
             {
-                if (!Directory.Exists(key))
+                var unreachable = false;
+                if (probes.ContainsKey(key))
+                {
+                    // 共有には届くのにフォルダが無い = 本当に消えた → 従来どおり出さない。
+                    // 共有ごと届かない (確認が間に合わなかった) ものは消さずに薄く並べる
+                    if (!Probed(key))
+                    {
+                        if (ShareRoot(key) is { } share && Probed(share))
+                            continue;
+                        unreachable = true;
+                    }
+                }
+                else if (!Directory.Exists(key))
+                {
                     continue;
+                }
                 var name = System.IO.Path.GetFileName(key.TrimEnd('\\'));
                 items.Add(new FileSystemItem
                 {
@@ -857,7 +960,10 @@ public class ColumnModel : ObservableObject, IDisposable
                     Name = string.IsNullOrEmpty(name) ? key : name,
                     IsDirectory = true,
                     UseRealIcon = true,
+                    // 届かない場所の実アイコンを UI スレッドで問い合わせると、そこで止まる
+                    IconPreloaded = unreachable,
                     IsFavoriteEntry = true,
+                    IsUnreachable = unreachable,
                 });
             }
         }
@@ -899,9 +1005,11 @@ public class ColumnModel : ObservableObject, IDisposable
         AddKnown("OneDrive", oneDrive);
 
         var shownDrives = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var drive in DriveInfo.GetDrives())
+        foreach (var drive in drives)
         {
-            if (!drive.IsReady)
+            // ネットワークドライブは上の並行確認の結果を使う。届かないものは
+            // ComputerFolder 側で「切断中」として拾われる
+            if (drive.DriveType == DriveType.Network ? !Probed("ready:" + drive.Name) : !drive.IsReady)
                 continue;
             shownDrives.Add(drive.RootDirectory.FullName);
             var label = string.IsNullOrEmpty(drive.VolumeLabel)
