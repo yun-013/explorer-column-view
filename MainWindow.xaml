@@ -748,7 +748,7 @@
                                             <TextBlock Margin="6,0,0,0" VerticalAlignment="Center" FontWeight="SemiBold"
                                                        Foreground="{DynamicResource TextPrimaryBrush}"
                                                        TextTrimming="CharacterEllipsis"
-                                                       Text="{Binding SearchQuery, StringFormat='「{0}」の検索結果'}"/>
+                                                       Text="{Binding SearchHeader}"/>
                                         </DockPanel>
                                     </Border>
                                     <ListBox Grid.Row="1" ItemsSource="{Binding Items}"

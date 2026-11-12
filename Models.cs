@@ -107,6 +107,21 @@ public class FileSystemItem : ObservableObject
     /// 届かなかった (または確認が間に合わなかった) もの。消さずに薄く並べ、選べば普通に開きに行く。</summary>
     public bool IsUnreachable { get; init; }
 
+    /// <summary>ショートカット (.lnk) か保存された検索 (.search-ms)。フォルダや保存された検索を
+    /// 指していれば、ファイルとして開かずに行き先を次の列に出す。</summary>
+    public bool MayOpenAsColumn => !IsDirectory
+        && (Path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase)
+            || Path.EndsWith(".search-ms", StringComparison.OrdinalIgnoreCase));
+
+    private Task<LinkTarget?>? _linkTarget;
+
+    /// <summary>行き先を裏で調べる (項目ごとに 1 回だけ)。列で開けなければ null。</summary>
+    public Task<LinkTarget?> GetLinkTargetAsync()
+        => _linkTarget ??= Task.Run(() => Shortcut.Classify(Path));
+
+    /// <summary>調べ終わっていて、行き先を列で開く項目か (→ キーや Enter で次の列へ進める)。</summary>
+    public bool OpensAsColumn => _linkTarget is { IsCompletedSuccessfully: true, Result: not null };
+
     /// <summary>アイコンをホーム列の生成時 (バックグラウンド) に確定済みの項目。
     /// UI スレッドからシェルに問い合わせない — 切断中のネットワークドライブや
     /// 応答の遅いシェル拡張で描画が止まるのを避ける。</summary>
@@ -490,6 +505,12 @@ public class ColumnModel : ObservableObject, IDisposable
     /// <summary>検索列の検索語 (列ヘッダーの表示用)。</summary>
     public string SearchQuery { get; private set; } = "";
 
+    /// <summary>保存された検索 (.search-ms) を開いた検索列なら、その中身。</summary>
+    public SavedSearch? SavedSearch { get; private set; }
+
+    /// <summary>検索列のヘッダー。保存された検索はその名前 (「画像」等) をそのまま出す。</summary>
+    public string SearchHeader => SavedSearch is { } saved ? saved.Name : $"「{SearchQuery}」の検索結果";
+
     /// <summary>実行中の検索。列が閉じられたら Dispose で確実に止める。</summary>
     public CancellationTokenSource? SearchCts { get; set; }
 
@@ -590,6 +611,9 @@ public class ColumnModel : ObservableObject, IDisposable
 
     /// <summary>検索結果を表示する列を作る。</summary>
     public static ColumnModel CreateSearch(string query) => new(isSearch: true) { SearchQuery = query };
+
+    /// <summary>保存された検索の結果を表示する列を作る。</summary>
+    public static ColumnModel CreateSavedSearch(SavedSearch search) => new(isSearch: true) { SavedSearch = search };
 
     public async Task LoadAsync(bool showHidden, Comparison<FileSystemItem> comparison)
     {
