@@ -1574,8 +1574,16 @@ public class MainViewModel : ObservableObject
         if (Navigating || ActiveTab is not { } tab)
             return;
         var index = tab.Columns.IndexOf(column);
+        if (index < 0)
+            return;
+        // 選んだまま行き先の列が出ていないショートカット (前回終了時に選ばれていたもの等) は開く
+        if (item.MayOpenAsColumn && index + 1 == tab.Columns.Count)
+        {
+            await OnItemSelectedAsync(column, item);
+            return;
+        }
         // 畳む対象が無い (すぐ右が中身の列で、そこで何も選んでいない) なら作り直さない
-        if (index < 0 || index + 1 >= tab.Columns.Count
+        if (index + 1 >= tab.Columns.Count
             || (index + 2 == tab.Columns.Count && tab.Columns[index + 1].SelectedItem is null))
             return;
         await OnItemSelectedAsync(column, item);
@@ -1638,11 +1646,16 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    /// <summary>列で開けないショートカット (アプリ・ファイルを指すもの) だけを普通に開く。</summary>
+    /// <summary>列で開けないショートカット (アプリ・ファイルを指すもの) だけを普通に開く。
+    /// 列で開けるもので行き先の列がまだ出ていなければ (前回終了時に選ばれていたもの等)、ここで出す。</summary>
     private async Task OpenShortcutAsync(FileSystemItem item)
     {
         if (await item.GetLinkTargetAsync() is not null)
+        {
+            if (ActiveTab?.Columns.LastOrDefault() is { } last && last.SelectedItem == item)
+                await OnItemSelectedAsync(last, item);
             return;
+        }
         try
         {
             Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
