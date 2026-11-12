@@ -689,7 +689,29 @@ public class MainViewModel : ObservableObject
         }
     }
 
-    private async Task RunSearchAsync(ColumnModel column, string scope, string query,
+    private Task RunSearchAsync(ColumnModel column, string scope, string query,
+        bool showHidden, Comparison<FileSystemItem> comparison, CancellationToken ct)
+    {
+        // * ? を含むならワイルドカード一致、含まなければ部分一致
+        Func<string, bool> matches = query.IndexOfAny(new[] { '*', '?' }) >= 0
+            ? name => FileSystemName.MatchesSimpleExpression(query, name, ignoreCase: true)
+            : name => name.Contains(query, StringComparison.OrdinalIgnoreCase);
+        return RunScanAsync(column, new[] { new SavedSearch.Scope(scope, Recursive: true) }, Array.Empty<string>(),
+            (name, _) => matches(name), MaxSearchResults, showHidden, comparison, ct);
+    }
+
+    /// <summary>保存された検索の結果の上限。写真フォルダのように数千件が普通にあるので、
+    /// 名前検索 (MaxSearchResults) より多めに取る。</summary>
+    private const int MaxSavedSearchResults = 5000;
+
+    private Task RunSavedSearchAsync(ColumnModel column, SavedSearch search,
+        bool showHidden, Comparison<FileSystemItem> comparison, CancellationToken ct)
+        => RunScanAsync(column, search.Includes, search.Excludes, search.Matches,
+            MaxSavedSearchResults, showHidden, comparison, ct);
+
+    /// <summary>範囲のフォルダ以下を走査し、条件に合う項目を検索列へ流し込む。</summary>
+    private async Task RunScanAsync(ColumnModel column, IReadOnlyList<SavedSearch.Scope> scopes,
+        IReadOnlyList<string> excludes, Func<string, bool, bool> matches, int maxResults,
         bool showHidden, Comparison<FileSystemItem> comparison, CancellationToken ct)
     {
         var dispatcher = System.Windows.Application.Current.Dispatcher;
@@ -709,15 +731,13 @@ public class MainViewModel : ObservableObject
                     return;
                 column.Items.ReplaceAll(snapshot);
                 StatusText = done
-                    ? capped ? $"検索結果: {count} 件 (上限 {MaxSearchResults} 件で打ち切り)" : $"検索結果: {count} 件"
+                    ? capped ? $"検索結果: {count} 件 (上限 {maxResults} 件で打ち切り)" : $"検索結果: {count} 件"
                     : $"検索中… {count} 件";
             });
         }
 
-        // * ? を含むならワイルドカード一致、含まなければ部分一致
-        Func<string, bool> matches = query.IndexOfAny(new[] { '*', '?' }) >= 0
-            ? name => FileSystemName.MatchesSimpleExpression(query, name, ignoreCase: true)
-            : name => name.Contains(query, StringComparison.OrdinalIgnoreCase);
+        var excluded = new HashSet<string>(excludes.Select(Path.TrimEndingDirectorySeparator),
+            StringComparer.OrdinalIgnoreCase);
 
         column.IsSearchRunning = true;
         try
@@ -725,16 +745,21 @@ public class MainViewModel : ObservableObject
             await Task.Run(() =>
             {
                 var sw = Stopwatch.StartNew();
-                // 幅優先: 浅い階層 (現在地に近い結果) から先に出す
-                var queue = new Queue<string>();
-                queue.Enqueue(scope);
+                // 幅優先: 浅い階層 (現在地に近い結果) から先に出す。範囲が重なっていても二度は数えない
+                var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var queue = new Queue<(string Dir, string Root, bool Recursive)>();
+                foreach (var scope in scopes)
+                    if (!excluded.Contains(Path.TrimEndingDirectorySeparator(scope.Path)))
+                        queue.Enqueue((scope.Path, scope.Path, scope.Recursive));
                 while (queue.Count > 0 && !capped)
                 {
                     ct.ThrowIfCancellationRequested();
-                    DirectoryInfo dir;
+                    var (current, root, recursive) = queue.Dequeue();
+                    if (!visited.Add(Path.TrimEndingDirectorySeparator(current)))
+                        continue;
                     try
                     {
-                        dir = new DirectoryInfo(queue.Dequeue());
+                        var dir = new DirectoryInfo(current);
                         foreach (var info in dir.EnumerateFileSystemInfos())
                         {
                             ct.ThrowIfCancellationRequested();
@@ -742,10 +767,14 @@ public class MainViewModel : ObservableObject
                             if (!showHidden && (attrs & (FileAttributes.Hidden | FileAttributes.System)) != 0)
                                 continue;
                             var isDir = (attrs & FileAttributes.Directory) != 0;
-                            // ジャンクション / シンボリックリンクは無限ループ回避のため辿らない
-                            if (isDir && (attrs & FileAttributes.ReparsePoint) == 0)
-                                queue.Enqueue(info.FullName);
-                            if (!matches(info.Name))
+                            if (isDir && excluded.Contains(info.FullName))
+                                continue;
+                            // ジャンクション / シンボリックリンクは無限ループ回避のため辿らない。
+                            // クラウドのプレースホルダー (OneDrive・接続デバイス等) も再解析ポイントだが、
+                            // こちらはリンクではないので辿る
+                            if (isDir && recursive && !IsLinkOrJunction(info, attrs))
+                                queue.Enqueue((info.FullName, root, true));
+                            if (!matches(info.Name, isDir))
                                 continue;
 
                             var parent = Path.GetDirectoryName(info.FullName);
@@ -758,10 +787,11 @@ public class MainViewModel : ObservableObject
                                 Modified = info.LastWriteTime,
                                 Size = isDir ? 0 : (info as FileInfo)?.Length ?? 0,
                                 Location = parent is not null
-                                    && !string.Equals(parent, scope, StringComparison.OrdinalIgnoreCase)
-                                    ? Path.GetRelativePath(scope, parent) : null,
+                                    && !string.Equals(Path.TrimEndingDirectorySeparator(parent),
+                                        Path.TrimEndingDirectorySeparator(root), StringComparison.OrdinalIgnoreCase)
+                                    ? Path.GetRelativePath(root, parent) : null,
                             });
-                            if (found.Count >= MaxSearchResults)
+                            if (found.Count >= maxResults)
                             {
                                 capped = true;
                                 break;
@@ -789,6 +819,22 @@ public class MainViewModel : ObservableObject
             column.IsSearchRunning = false;
         }
         Flush(done: true);
+    }
+
+    /// <summary>シンボリックリンク / ジャンクションか (クラウドのプレースホルダー等、
+    /// リンクではない再解析ポイントは false)。判別できなければ辿らない側に倒す。</summary>
+    private static bool IsLinkOrJunction(FileSystemInfo info, FileAttributes attrs)
+    {
+        if ((attrs & FileAttributes.ReparsePoint) == 0)
+            return false;
+        try
+        {
+            return info.LinkTarget is not null;
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+        {
+            return true;
+        }
     }
 
     // ---- タブ・ナビゲーション ----
@@ -1360,6 +1406,15 @@ public class MainViewModel : ObservableObject
     /// <summary>検索結果の列を同じ検索語で走査し直す。起点は結果列より左の一番近いフォルダ列。</summary>
     private async Task RerunSearchAsync(TabModel tab, ColumnModel column)
     {
+        // 保存された検索は自分の範囲を持っているので、左の列とは関係なくそのままやり直す
+        if (column.SavedSearch is { } saved)
+        {
+            var savedCts = StartSearch(column);
+            StatusText = $"検索中… ({saved.Name})";
+            await RunSavedSearchAsync(column, saved, ShowHidden, CurrentComparison, savedCts.Token);
+            return;
+        }
+
         string? scope = null;
         for (var i = tab.Columns.IndexOf(column) - 1; i >= 0; i--)
             if (tab.Columns[i].Path is { } path)
@@ -1370,13 +1425,20 @@ public class MainViewModel : ObservableObject
         if (string.IsNullOrEmpty(column.SearchQuery) || scope is null || !await DirectoryExistsAsync(scope))
             return;
 
+        var cts = StartSearch(column);
+        StatusText = $"検索中… ({scope})";
+        await RunSearchAsync(column, scope, column.SearchQuery, ShowHidden, CurrentComparison, cts.Token);
+    }
+
+    /// <summary>実行中の検索を止めて、この列の走査用のキャンセルを新しく用意する。</summary>
+    private CancellationTokenSource StartSearch(ColumnModel column)
+    {
         _searchCts?.Cancel();
         column.SearchCts?.Cancel();
         var cts = new CancellationTokenSource();
         _searchCts = cts;
         column.SearchCts = cts; // 列が閉じられたら走査も止まる
-        StatusText = $"検索中… ({scope})";
-        await RunSearchAsync(column, scope, column.SearchQuery, ShowHidden, CurrentComparison, cts.Token);
+        return cts;
     }
 
     /// <summary>実在する一番近い親フォルダ。どこまでたどっても無ければ null (= ホーム)。
@@ -1405,6 +1467,7 @@ public class MainViewModel : ObservableObject
 
         // 選択列より右の列を畳む
         TrimColumns(tab, index + 1);
+        var selection = ++_selectionVersion;
 
         // グループ見出し: 中身 (サブグループ＋フォルダ) を次の列に展開する。
         // CurrentPath は据え置き (直前のフォルダを「現在のフォルダ」として追加できるように)。
@@ -1437,6 +1500,20 @@ public class MainViewModel : ObservableObject
             return;
         }
 
+        // ショートカット / 保存された検索: 行き先がフォルダか保存された検索なら、
+        // ファイルとして扱わずに中身を次の列に出す (調べるのは裏で、通常は一瞬)
+        if (item.MayOpenAsColumn && await item.GetLinkTargetAsync() is { } link)
+        {
+            // 調べている間に別の項目が選ばれていたら、そちらに任せる
+            if (selection != _selectionVersion || ActiveTab != tab || tab.Columns.IndexOf(column) != index)
+                return;
+            await OpenLinkColumnAsync(tab, item, link);
+            PreviewFollow?.Invoke(item);
+            return;
+        }
+        if (selection != _selectionVersion)
+            return;
+
         SetCurrentPath(item.Path, item.IsDirectory);
 
         if (item.IsDirectory)
@@ -1459,6 +1536,34 @@ public class MainViewModel : ObservableObject
         // プレビュー (Quick Look) が開いていれば選択に追従させる。
         // 実際の追従は View 側 (MainWindow) が SelectionChanged で行う。
         PreviewFollow?.Invoke(item);
+    }
+
+    /// <summary>列の選択が変わるたびに進む番号。ショートカットの行き先を調べている間に
+    /// 別の項目が選ばれたかを見分ける。</summary>
+    private int _selectionVersion;
+
+    /// <summary>ショートカットの行き先を次の列に出す。フォルダならその中身、
+    /// 保存された検索ならその検索結果 (現在のフォルダはショートカットのある場所のまま)。</summary>
+    private async Task OpenLinkColumnAsync(TabModel tab, FileSystemItem item, LinkTarget link)
+    {
+        tab.Title = TrimTitle(Path.GetFileNameWithoutExtension(item.Name));
+        if (link.Kind == LinkTargetKind.Folder)
+        {
+            SetCurrentPath(link.Path, isDirectory: true);
+            var next = new ColumnModel(link.Path);
+            tab.Columns.Add(next);
+            await next.LoadAsync(ShowHidden, CurrentComparison);
+            UpdateStatus(next);
+            return;
+        }
+
+        SetCurrentPath(item.Path, isDirectory: false);
+        var search = link.Search!;
+        var column = ColumnModel.CreateSavedSearch(search);
+        var cts = StartSearch(column);
+        tab.Columns.Add(column);
+        StatusText = $"検索中… ({search.Name})";
+        await RunSavedSearchAsync(column, search, ShowHidden, CurrentComparison, cts.Token);
     }
 
     /// <summary>選択済みの項目 (奥の列を開いている途中のフォルダ) を再クリックしたとき:
@@ -1488,6 +1593,7 @@ public class MainViewModel : ObservableObject
         if (index < 0)
             return;
         TrimColumns(tab, index + 1);
+        _selectionVersion++; // 調べかけのショートカットが後から列を開かないように
         StatusText = $"{count} 個を選択";
     }
 
@@ -1511,12 +1617,34 @@ public class MainViewModel : ObservableObject
                 _ = ConnectDriveAsync(item);
                 return;
             }
+            // フォルダ / 保存された検索を指すショートカットは選択した時点で次の列に出ているので、
+            // 別ウィンドウでは開かない (行き先を調べている途中なら、その結果で決める)
+            if (item.MayOpenAsColumn)
+            {
+                _ = OpenShortcutAsync(item);
+                return;
+            }
             // ShellExecute は UI スレッドで対象に問い合わせるので、届かないと分かっている共有は開きに行かない
             if (Reachability.IsKnownUnreachable(item.Path))
             {
                 StatusText = $"接続先に届きません: {item.Path}";
                 return;
             }
+            Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            StatusText = "開けませんでした: " + ex.Message;
+        }
+    }
+
+    /// <summary>列で開けないショートカット (アプリ・ファイルを指すもの) だけを普通に開く。</summary>
+    private async Task OpenShortcutAsync(FileSystemItem item)
+    {
+        if (await item.GetLinkTargetAsync() is not null)
+            return;
+        try
+        {
             Process.Start(new ProcessStartInfo(item.Path) { UseShellExecute = true });
         }
         catch (Exception ex)

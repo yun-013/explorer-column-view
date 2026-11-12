@@ -1278,12 +1278,16 @@ public partial class MainWindow : Window
                 break;
 
             case Key.Enter:
-                _vm.OpenItem(selected);
+                // 列で開くショートカットは、フォルダと同じく次の列へ進む
+                if (selected?.OpensAsColumn == true)
+                    FocusColumn(GetColumnIndex(listBox) + 1, selectFirst: true);
+                else
+                    _vm.OpenItem(selected);
                 e.Handled = true;
                 break;
 
             case Key.Right:
-                if (selected?.IsDirectory == true)
+                if (selected?.IsDirectory == true || selected?.OpensAsColumn == true)
                 {
                     FocusColumn(GetColumnIndex(listBox) + 1, selectFirst: true);
                     e.Handled = true;
