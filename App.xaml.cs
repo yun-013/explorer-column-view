@@ -88,6 +88,9 @@ public partial class App : Application
         // 起動をブロックしない (オフラインの NAS は Directory.Exists が数秒待つことがある)
         _ = Task.Run(FileOps.PurgeAllTrashRoots);
 
+        // 前回までのファイル操作履歴 (再起動後も確認・巻き戻しできるように)
+        FileHistory.Load();
+
         // クラウドの同期ルート検出を裏で済ませておく (初回がツールチップ等の UI スレッドで走らないように)
         CloudSync.Warm();
 
@@ -194,6 +197,7 @@ public partial class App : Application
     {
         // コピー直後に終了してもクリップボードの中身が消えないように
         ClipboardOps.FlushOnExit();
+        HistoryStore.SaveNow(wait: true);
         base.OnExit(e);
         // 終了保険: メディア基盤 (MF) やシェル拡張・WinRT が残したスレッドが
         // プロセスを生かし続けると「ウィンドウは無いのに exe がロックされたまま」になる。

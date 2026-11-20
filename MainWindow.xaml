@@ -54,6 +54,36 @@
             </Setter>
         </Style>
 
+        <!-- 通知カード (元に戻す付き) の文字ボタン -->
+        <Style x:Key="ToastButton" TargetType="Button">
+            <Setter Property="Height" Value="28"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Margin" Value="2,0"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="7"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverOverlayBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource PressedOverlayBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ToggleToolButton" TargetType="ToggleButton" BasedOn="{StaticResource ToolButton}">
             <Style.Triggers>
                 <Trigger Property="IsChecked" Value="True">
@@ -542,6 +572,9 @@
                             Content="&#xE71D;" Foreground="{DynamicResource AccentBrush}"
                             ToolTip="タブグループ (よく使うフォルダの組合せをワンクリックで開く)"
                             Click="GroupsButton_Click"/>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Content="&#xE81C;"
+                            ToolTip="操作履歴 (Ctrl+Shift+H) — 移動・削除などを確認し、好きなところまで元に戻せます"
+                            Click="History_Click"/>
                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource ToggleToolButton}" Content="&#xE7B3;"
                                   ToolTip="隠しファイルを表示 (Ctrl+H)" IsChecked="{Binding ShowHidden}"/>
                     <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}"
@@ -823,6 +856,30 @@
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </ScrollViewer>
+
+            <!-- 移動・削除の直後に出す通知 (元に戻す / 履歴)。クリックのつもりで動かしてしまっても
+                 その場で気付けるよう、列の上に浮かべる -->
+            <Border x:Name="UndoToast" Visibility="Collapsed"
+                    HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="16,0,16,16"
+                    MaxWidth="680" Padding="12,5,5,5" CornerRadius="10"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource WindowOuterBorderBrush}" BorderThickness="1"
+                    Effect="{DynamicResource SheetShadow}"
+                    MouseEnter="UndoToast_MouseEnter" MouseLeave="UndoToast_MouseLeave">
+                <DockPanel>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Width="28" Height="28"
+                            FontSize="10" Content="&#xE711;" ToolTip="閉じる" Click="UndoToastClose_Click"/>
+                    <Button DockPanel.Dock="Right" Style="{StaticResource ToastButton}" Content="履歴"
+                            Foreground="{DynamicResource TextSecondaryBrush}"
+                            ToolTip="操作履歴を開く (Ctrl+Shift+H)" Click="UndoToastHistory_Click"/>
+                    <Button x:Name="UndoToastUndo" DockPanel.Dock="Right" Style="{StaticResource ToastButton}"
+                            Content="元に戻す" ToolTip="この操作を取り消す (Ctrl+Z)" Click="UndoToastUndo_Click"/>
+                    <local:Icon x:Name="UndoToastIcon" DockPanel.Dock="Left" FontSize="14" VerticalAlignment="Center"
+                                Foreground="{DynamicResource AccentBrush}" Margin="0,0,9,0"/>
+                    <TextBlock x:Name="UndoToastText" VerticalAlignment="Center" Margin="0,0,8,0"
+                               TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextPrimaryBrush}"/>
+                </DockPanel>
+            </Border>
             </Grid>
             </Border>
             </DockPanel>

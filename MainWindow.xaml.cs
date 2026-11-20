@@ -28,6 +28,7 @@ public partial class MainWindow : Window
         _vm = vm;
         DataContext = _vm;
         _vm.TabsEmptied += OnTabsEmptied;
+        HookHistory();
 
         Activated += (_, _) =>
         {
@@ -1184,6 +1185,25 @@ public partial class MainWindow : Window
             return;
         }
 
+        // マウスのボタンを押している間は、選択の見た目だけ先に変え、列の入れ替え (と、それに伴う
+        // 横スクロール) はボタンを離したときに行う。押した瞬間に列が動くとカーソルの下に別の列が来て、
+        // クリックのわずかなずれが「その列へのドラッグ移動」になってしまうため
+        if (_leftPressInColumn && Mouse.LeftButton == MouseButtonState.Pressed)
+        {
+            _pendingSelectionList = listBox;
+            return;
+        }
+        await ApplySelectionAsync(listBox, column);
+    }
+
+    /// <summary>左ボタンが列の中で押されている (離したら保留中の選択を反映する)。</summary>
+    private bool _leftPressInColumn;
+
+    /// <summary>ボタンを押している間に選択が変わった列 (離したときに列を開く)。</summary>
+    private ListBox? _pendingSelectionList;
+
+    private async Task ApplySelectionAsync(ListBox listBox, ColumnModel column)
+    {
         // 複数選択時は子の列を開かず件数表示のみ
         if (listBox.SelectedItems.Count > 1)
         {
@@ -1193,6 +1213,24 @@ public partial class MainWindow : Window
         if (listBox.SelectedItem is FileSystemItem item)
             await _vm.OnItemSelectedAsync(column, item);
     }
+
+    /// <summary>ボタンを離した (またはドラッグが終わった): 押している間に保留した選択を反映する。</summary>
+    private async void FlushPendingSelection()
+    {
+        _leftPressInColumn = false;
+        var list = _pendingSelectionList;
+        _pendingSelectionList = null;
+        if (list is { DataContext: ColumnModel column } && list.IsLoaded)
+            await ApplySelectionAsync(list, column);
+        if (_dropGuardHint is { } hint)
+        {
+            _dropGuardHint = null;
+            _vm.StatusText = hint;
+        }
+    }
+
+    /// <summary>誤ドロップとして見送ったときの案内 (選択の反映後にステータスへ出し直す)。</summary>
+    private string? _dropGuardHint;
 
     /// <summary>選択中の項目のうち実ファイル / フォルダだけのパス
     /// (ホームのお気に入り・ドライブ・グループ行はファイル操作の対象外)。</summary>
@@ -1458,10 +1496,14 @@ public partial class MainWindow : Window
     private void Column_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         _dragStart = e.GetPosition(null);
+        _leftPressInColumn = true;
         _reclickItem = null;
         _groupDragCandidate = null;
         _memberDragCandidate = null;
-        var item = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext as FileSystemItem;
+        var pressed = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+        _pressedContainer = pressed;
+        _pressedContainerPos = pressed?.TranslatePoint(new Point(), this);
+        var item = pressed?.DataContext as FileSystemItem;
 
         // 既に単独選択中の項目を押した: 選択が変わらず SelectionChanged が来ないので、
         // 離したときに奥の列を畳む (入れ子の途中のフォルダをクリック → そのフォルダを表示)
@@ -1497,6 +1539,7 @@ public partial class MainWindow : Window
     private async void Column_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
         EndBand();
+        FlushPendingSelection();
         // 複数選択を掴んだがドラッグしなかった = 通常クリック → その項目だけ選択
         if (_reclickItem is not null && !_isDragging && sender is ListBox lb)
         {
@@ -1514,26 +1557,60 @@ public partial class MainWindow : Window
         if (reselect is null || _isDragging || sender is not ListBox { DataContext: ColumnModel column }
             || FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject)?.DataContext != reselect)
             return;
-        var pos = e.GetPosition(null);
-        if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance
-            && Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+        if (!MovedBeyondDragThreshold(e.GetPosition(null)))
             await _vm.ReselectAsync(column, reselect);
+    }
+
+    private ListBoxItem? _pressedContainer;
+    private Point? _pressedContainerPos;
+
+    /// <summary>ドラッグを始めるのに必要な移動量を超えたか。クリックの手ぶれでドラッグに
+    /// ならないよう、システム既定 (4px) より少し大きい値を使う (設定で変更可)。</summary>
+    private bool MovedBeyondDragThreshold(Point pos)
+    {
+        var min = Math.Max(0, AppSettings.Current.DragStartDistance);
+        return Math.Abs(pos.X - _dragStart.X) >= Math.Max(SystemParameters.MinimumHorizontalDragDistance, min)
+            || Math.Abs(pos.Y - _dragStart.Y) >= Math.Max(SystemParameters.MinimumVerticalDragDistance, min);
+    }
+
+    /// <summary>押した行が、押してから画面上で動いたか (列の入れ替え・自動スクロールなど)。
+    /// 動いていたら、カーソルの下にあるのはもう押したときの物ではないので、ドラッグにしない。</summary>
+    private bool PressedItemShifted()
+    {
+        if (_pressedContainer is not { } container || _pressedContainerPos is not { } before)
+            return false;
+        if (!container.IsVisible || PresentationSource.FromVisual(container) is null)
+            return true;
+        var now = container.TranslatePoint(new Point(), this);
+        return Math.Abs(now.X - before.X) > 2 || Math.Abs(now.Y - before.Y) > 2;
     }
 
     private void Column_PreviewMouseMove(object sender, MouseEventArgs e)
     {
         if (BandMouseMove(e))
             return;
-        if (_isDragging || e.LeftButton != MouseButtonState.Pressed)
+        if (e.LeftButton != MouseButtonState.Pressed)
+        {
+            // ボタンを離したのに Up が届かなかった (ウィンドウ外で離した等): 保留した選択をここで反映する
+            if (_leftPressInColumn && !_isDragging)
+                FlushPendingSelection();
+            return;
+        }
+        if (_isDragging)
             return;
         if (_dragCandidate is null && _favDragCandidate is null
             && _groupDragCandidate is null && _memberDragCandidate is null)
             return;
 
-        var pos = e.GetPosition(null);
-        if (Math.Abs(pos.X - _dragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
-            Math.Abs(pos.Y - _dragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+        if (!MovedBeyondDragThreshold(e.GetPosition(null)))
             return;
+
+        if (PressedItemShifted())
+        {
+            // クリックの直後に行が動いた → クリックとして扱い、ドラッグは始めない
+            _dragCandidate = _favDragCandidate = _groupDragCandidate = _memberDragCandidate = null;
+            return;
+        }
 
         // グループ見出し / メンバー / お気に入り: すべて統一並べ替え (HomeFormat、キーで運ぶ)。
         // ドロップ先の列がコンテナ (ホーム列 or グループ列) を決める。
@@ -1574,6 +1651,8 @@ public partial class MainWindow : Window
         ShowDragGhost(_dragCandidate.Icon, _dragCandidate.Name, paths.Length,
                       GrabOffsetFor(sender, _dragCandidate, e));
         StartDragWheelHook();
+        // 押した位置 (ドラッグ開始判定より手前) を起点に、誤ドロップの見張りを始める
+        DropGuard.Begin(this, _dragStart);
         try
         {
             // Link も許可する。許可していない効果はどのドロップ先も返せないため、
@@ -1584,12 +1663,16 @@ public partial class MainWindow : Window
         }
         finally
         {
+            DropGuard.End();
             StopDragWheelHook();
             DragDrop.RemoveGiveFeedbackHandler(src, DragSource_GiveFeedback);
             HideDragGhost();
             _isDragging = false;
             _dragCandidate = null;
             _reclickItem = null;
+            ClearDropHighlight();
+            // ドラッグ中は Up が来ないので、押したときに保留した選択 (列の入れ替え) をここで反映する
+            FlushPendingSelection();
         }
     }
 
@@ -1617,6 +1700,7 @@ public partial class MainWindow : Window
             _dragCandidate = null;
             ClearInsertIndicator();
             ClearDropHighlight();
+            FlushPendingSelection();
         }
     }
 
@@ -1838,7 +1922,12 @@ public partial class MainWindow : Window
         // 返す効果はエクスプローラーと同じにしておき (ここで None を返すと本家が出さない
         // 禁止カーソルが出てしまう)、実際に何かが起きるかはゴーストの見た目だけに反映する
         _dropIsNoOp = IsNoOpDrop(sender, e, e.Effects);
-        UpdateDropHighlight(e);
+        // 押した場所の近くでは、ドロップ先の上で少し止まるまで確定しない (クリックのずれ対策)。
+        // 確定するまではゴーストを「何も起きない」表示にし、フォルダも光らせない
+        var armed = e.Effects == DragDropEffects.None || DropGuard.IsArmed(ResolveTargetDir(sender, e));
+        if (!armed)
+            _dropIsNoOp = true;
+        UpdateDropHighlight(e, armed);
         e.Handled = true;
     }
 
@@ -1932,6 +2021,20 @@ public partial class MainWindow : Window
         if (targetDir is null)
             return;
 
+        // まだ確定していない (押した場所の近くで、すぐに離した) → クリックのずれと見なして何もしない
+        if (!DropGuard.IsArmed(targetDir))
+        {
+            e.Effects = DragDropEffects.None;
+            e.Handled = true;
+            if (!IsNoOpDrop(sender, e, effect))
+            {
+                // ドラッグ後に反映する選択 (列の入れ替え) がステータスを書き換えるので、その後にもう一度出す
+                _dropGuardHint = "ドロップ先の上で少し止めてから離すと実行します (今回は何もしていません)";
+                _vm.StatusText = _dropGuardHint;
+            }
+            return;
+        }
+
         var sources = (string[])e.Data.GetData(DataFormats.FileDrop);
         e.Handled = true;
         await _vm.HandleDropAsync(sources, targetDir, ToDropMode(effect));
@@ -1983,9 +2086,9 @@ public partial class MainWindow : Window
         return sameVolume ? DragDropEffects.Move : DragDropEffects.Copy;
     }
 
-    private void UpdateDropHighlight(DragEventArgs e)
+    private void UpdateDropHighlight(DragEventArgs e, bool armed = true)
     {
-        var container = FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject);
+        var container = armed ? FindAncestor<ListBoxItem>(e.OriginalSource as DependencyObject) : null;
         var target = container?.DataContext is FileSystemItem { IsDirectory: true } ? container : null;
         if (ReferenceEquals(target, _dropHighlight))
             return;
@@ -2358,6 +2461,11 @@ public partial class MainWindow : Window
                 case Key.N:
                     e.Handled = true;
                     await NewFolderFlow();
+                    break;
+                case Key.H:
+                    // 操作履歴 (Ctrl+H は隠しファイルの切り替えなので Shift 付きにする)
+                    e.Handled = true;
+                    HistoryWindow.ShowFor(this, null);
                     break;
                 case Key.Z:
                     if (Keyboard.FocusedElement is not TextBox)
