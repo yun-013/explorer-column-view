@@ -128,44 +128,63 @@ public static class Shortcut
 
     /// <summary>このファイルのアイコン・サムネイルをシェルに作らせてよいか。.lnk / .url 等はシェルが
     /// アイコンの置き場所 (無ければリンク先) を読みに行くので、どちらかが信頼していないサーバーに
-    /// あると、フォルダを表示しただけでそこへ繋ぎに行ってしまう。判別できないもの
-    /// (パスを持たないリンク・中身を読み解かない形式) も避ける。それ以外の形式は true。</summary>
-    public static bool IsSafeForShell(string linkPath) => IsSafeForShell(linkPath, depth: 0);
+    /// あると、フォルダを表示しただけでそこへ繋ぎに行ってしまう。
+    /// .lnk / .url は中身を読んで、安全と確かめられたときだけ true (分からなければ汎用アイコン)。
+    /// アイコンの置き場所を中身に書ける既知の形式は常に false。それ以外の形式は true。</summary>
+    public static bool IsSafeForShell(string path) => IsSafeForShell(path, depth: 0);
 
-    /// <summary>中身にアイコンの置き場所を書けるが、ここでは読み解かない形式。
+    /// <summary>中身にアイコン / 画像の置き場所を書けるが、ここでは読み解かない形式。
     /// シェルに任せず汎用アイコンで済ませる (どれも滅多に見ないので見た目の損は小さい)。</summary>
     private static readonly HashSet<string> OpaqueIconCarriers = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".scf", ".library-ms", ".searchconnector-ms", ".appref-ms", ".website",
+        ".scf", ".library-ms", ".searchconnector-ms", ".appref-ms", ".website", ".pif",
+        ".theme", ".themepack", ".deskthemepack",
     };
+
+    /// <summary>アイコンの置き場所を自前で持たない .lnk のとき、リンク先として許す形式。
+    /// シェルはリンク先の種類のアイコン (この PC の登録情報) か、実行ファイル自身の
+    /// アイコン (ローカルのファイルの中身) を使うだけで、中身に書かれた別の場所は読まない。
+    /// ここに無い形式を指すリンクは汎用アイコンにする (知らない形式には寄せない)。</summary>
+    private static readonly HashSet<string> InertTargetExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".exe", ".com", ".bat", ".cmd", ".ps1", ".msc", ".cpl", ".dll", ".ico",
+        ".txt", ".md", ".log", ".csv", ".json", ".xml", ".html", ".htm", ".pdf",
+        ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+        ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".heic",
+        ".mp3", ".m4a", ".wav", ".flac", ".mp4", ".mov", ".mkv", ".avi", ".zip", ".7z",
+    };
+
+    /// <summary>シェルが実際に開くファイル名に近づけた拡張子: ":stream" を除き、
+    /// 末尾の "." と空白を落とす (Windows はそれらを無視して開くため)。</summary>
+    private static string CleanExtension(string path)
+    {
+        var name = System.IO.Path.GetFileName(path.TrimEnd('\\', '/'));
+        var colon = name.IndexOf(':');
+        if (colon >= 0)
+            name = name[..colon];
+        return System.IO.Path.GetExtension(name.TrimEnd('.', ' '));
+    }
 
     private static bool IsSafeForShell(string path, int depth)
     {
-        var extension = System.IO.Path.GetExtension(path);
+        var extension = CleanExtension(path);
         if (OpaqueIconCarriers.Contains(extension))
             return false;
         if (extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
             return IsSafeInternetShortcut(path);
         if (!extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase))
             return true;
-        if (ResolveTarget(path) is not { } target || !NetworkTrust.IsTrusted(target.Path))
-            return false;
-        // リンク先が .url や別の .lnk 等なら、シェルはそちらのアイコンの置き場所まで読みに行く
-        var targetExtension = System.IO.Path.GetExtension(target.Path);
-        var targetCarriesIcon = targetExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
-            || targetExtension.Equals(".url", StringComparison.OrdinalIgnoreCase)
-            || OpaqueIconCarriers.Contains(targetExtension);
-        if (targetCarriesIcon && (depth >= 2 || !IsSafeForShell(target.Path, depth + 1)))
+        if (depth >= 2 || ResolveTarget(path) is not { } target || !NetworkTrust.IsTrusted(target.Path))
             return false;
 
+        string iconLocation;
         var link = (IShellLinkW)new ShellLink();
         try
         {
             ((IPersistFile)link).Load(path, 0);
             var buffer = new System.Text.StringBuilder(1024);
             link.GetIconLocation(buffer, buffer.Capacity, out _);
-            return buffer.Length == 0
-                || NetworkTrust.IsTrusted(Environment.ExpandEnvironmentVariables(buffer.ToString()));
+            iconLocation = Environment.ExpandEnvironmentVariables(buffer.ToString());
         }
         catch
         {
@@ -175,10 +194,67 @@ public static class Shortcut
         {
             Marshal.FinalReleaseComObject(link);
         }
+
+        // アイコンの置き場所を自前で持つなら、シェルはそこだけを読む (リンク先には聞かない)。
+        // 置き場所自体がアイコンの置き場所を書ける形式なら許さない
+        if (iconLocation.Length > 0)
+        {
+            var iconExtension = CleanExtension(iconLocation);
+            return NetworkTrust.IsTrusted(iconLocation)
+                && !OpaqueIconCarriers.Contains(iconExtension)
+                && !iconExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+                && !iconExtension.Equals(".url", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // 置き場所が無ければリンク先のアイコンになる
+        var targetExtension = CleanExtension(target.Path);
+        if (targetExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+            || targetExtension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+            return IsSafeForShell(target.Path, depth + 1);
+        if ((target.Attributes & System.IO.FileAttributes.Directory) != 0
+            || (target.Attributes == 0 && System.IO.Directory.Exists(target.Path)))
+            return IsSafeFolderIcon(target.Path);
+        return InertTargetExtensions.Contains(targetExtension);
     }
 
-    /// <summary>インターネット ショートカット (.url) のアイコンの置き場所 (IconFile) と、
-    /// file: の URL が指す先が信頼できるか。シェルを通さず、テキストとして読む。</summary>
+    /// <summary>フォルダの desktop.ini に書かれたアイコンの置き場所 (IconResource / IconFile) が
+    /// 信頼できるか。desktop.ini が無ければ true、読めなければ false。</summary>
+    private static bool IsSafeFolderIcon(string folder)
+    {
+        var ini = System.IO.Path.Combine(folder, "desktop.ini");
+        try
+        {
+            if (!System.IO.File.Exists(ini))
+                return true;
+            foreach (var raw in System.IO.File.ReadLines(ini))
+            {
+                var line = raw.Trim();
+                var eq = line.IndexOf('=');
+                if (eq <= 0)
+                    continue;
+                var key = line[..eq].Trim();
+                if (!key.Equals("IconResource", StringComparison.OrdinalIgnoreCase)
+                    && !key.Equals("IconFile", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var value = Environment.ExpandEnvironmentVariables(line[(eq + 1)..].Trim().Split(',')[0].Trim());
+                // 相対パスはフォルダからの位置
+                var resolved = System.IO.Path.IsPathFullyQualified(value) || value.StartsWith(@"\\", StringComparison.Ordinal)
+                    ? value
+                    : System.IO.Path.Combine(folder, value);
+                if (value.Length > 0 && !NetworkTrust.IsTrusted(resolved))
+                    return false;
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>インターネット ショートカット (.url) をシェルに読ませてよいか。シェルを通さずテキストとして読み、
+    /// URL は http / https / mailto だけ、IconFile は信頼できる場所だけを許す。
+    /// 別の文字コードで値を書き直せる [InternetShortcut.W] / [InternetShortcut.A] 節があれば許さない。</summary>
     private static bool IsSafeInternetShortcut(string path)
     {
         try
@@ -186,6 +262,8 @@ public static class Shortcut
             foreach (var raw in System.IO.File.ReadLines(path))
             {
                 var line = raw.Trim();
+                if (line.StartsWith("[InternetShortcut.", StringComparison.OrdinalIgnoreCase))
+                    return false;
                 var eq = line.IndexOf('=');
                 if (eq <= 0)
                     continue;
@@ -196,9 +274,8 @@ public static class Shortcut
                 if (key.Equals("IconFile", StringComparison.OrdinalIgnoreCase) && !NetworkTrust.IsTrusted(value))
                     return false;
                 if (key.Equals("URL", StringComparison.OrdinalIgnoreCase)
-                    && value.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
-                    // file://host/share/x の LocalPath は "\\host\share\x" になる
-                    && !(Uri.TryCreate(value, UriKind.Absolute, out var uri) && NetworkTrust.IsTrusted(uri.LocalPath)))
+                    && !(Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeMailto)))
                     return false;
             }
             return true;
