@@ -449,7 +449,15 @@ public static class DocumentPreview
             lines.Add($"作業フォルダー: {link.Value.WorkingDirectory}");
         if (!string.IsNullOrWhiteSpace(link.Value.Description))
             lines.Add($"コメント: {link.Value.Description}");
-        if (link.Value.Target.Length > 0 && !File.Exists(link.Value.Target) && !Directory.Exists(link.Value.Target))
+        // 存在確認はリンク先に触れるので、信頼していないサーバーを指すときはしない
+        // (選択に追従するプレビューだけで、そのサーバーへ繋ぎに行かせないため)
+        if (link.Value.Target.Length == 0)
+        {
+            // パスを持たないリンク (シェルの場所を指すもの) は確かめようがない
+        }
+        else if (!NetworkTrust.IsTrusted(link.Value.Target))
+            lines.Add("\n(信頼していないネットワーク上の場所のため、リンク先は確かめていません)");
+        else if (!File.Exists(link.Value.Target) && !Directory.Exists(link.Value.Target))
             lines.Add("\n(リンク先が見つかりません)");
         return string.Join("\n", lines);
     }

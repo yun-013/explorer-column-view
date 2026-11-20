@@ -14,25 +14,64 @@ namespace ColumnView;
 /// </summary>
 public static class NetworkTrust
 {
-    /// <summary>ネットワークに触れずに判定する (設定とレジストリだけを見る)。</summary>
-    public static bool IsTrusted(string path)
+    /// <summary>ネットワークに触れずに判定する (設定とレジストリだけを見る)。
+    /// 判別できない書き方 (空・相対・デバイス名前空間など) は信頼しない側に倒す。</summary>
+    public static bool IsTrusted(string? path)
     {
-        if (!Reachability.IsNetworkPath(path))
+        if (Normalize(path) is not { } normalized)
+            return false;
+        // ドライブ文字: ローカル、またはネットワークドライブ (割り当てたのは利用者自身で、接続済みでもある)
+        if (IsDriveLetterPath(normalized))
             return true;
-        // ドライブ文字はネットワークドライブ。割り当てたのは利用者自身で、既に接続済みでもある
-        if (!path.StartsWith(@"\\", StringComparison.Ordinal))
-            return true;
-        return HostOf(path) is { } host && TrustedHosts().Contains(host);
+        return normalized.StartsWith(@"\\", StringComparison.Ordinal)
+            && HostOf(normalized) is { } host
+            && TrustedHosts().Contains(host);
     }
 
-    /// <summary>"\\host\share\..." のホスト部分。UNC でなければ null。</summary>
-    public static string? HostOf(string path)
+    /// <summary>ネットワークドライブでないドライブ文字のパスか (触れても外へ繋ぎに行かない場所)。</summary>
+    public static bool IsLocalPath(string? path)
     {
-        if (!path.StartsWith(@"\\", StringComparison.Ordinal))
+        if (Normalize(path) is not { } normalized || !IsDriveLetterPath(normalized))
+            return false;
+        try
+        {
+            // GetDriveType はドライブ文字の種類を見るだけで、接続先には問い合わせない
+            return new DriveInfo(normalized[..1]).DriveType != DriveType.Network;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>UNC パスのホスト部分 ("\\?\UNC\host\..." や "//host/..." の書き方も含む)。UNC でなければ null。</summary>
+    public static string? HostOf(string? path)
+    {
+        if (Normalize(path) is not { } normalized || !normalized.StartsWith(@"\\", StringComparison.Ordinal))
             return null;
-        var host = path[2..].Split('\\', 2)[0];
+        var host = normalized[2..].Split('\\', 2)[0];
         return host.Length > 0 ? host : null;
     }
+
+    /// <summary>同じ場所の別の書き方をそろえる: "/" → "\"、"\\?\UNC\host" / "\\.\UNC\host" → "\\host"、
+    /// "\\?\C:\" → "C:\"。それ以外のデバイス名前空間 ("\\?\GLOBALROOT\..." 等) や空は null (= 信頼しない)。</summary>
+    private static string? Normalize(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+        var p = path.Trim().Replace('/', '\\');
+        foreach (var prefix in new[] { @"\\?\UNC\", @"\\.\UNC\", @"\??\UNC\" })
+            if (p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return @"\\" + p[prefix.Length..];
+        foreach (var prefix in new[] { @"\\?\", @"\\.\", @"\??\" })
+            if (p.StartsWith(prefix, StringComparison.Ordinal))
+                return IsDriveLetterPath(p[prefix.Length..]) ? p[prefix.Length..] : null;
+        return p;
+    }
+
+    /// <summary>"C:\..." の形 (ドライブ相対の "C:foo" は含めない)。</summary>
+    private static bool IsDriveLetterPath(string p)
+        => p.Length >= 3 && char.IsAsciiLetter(p[0]) && p[1] == ':' && p[2] == '\\';
 
     private static HashSet<string> TrustedHosts()
     {
@@ -48,7 +87,7 @@ public static class NetworkTrust
 
         void Add(string? path)
         {
-            if (path is not null && HostOf(path) is { } host)
+            if (HostOf(path) is { } host)
                 hosts.Add(host);
         }
 

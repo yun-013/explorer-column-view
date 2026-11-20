@@ -68,6 +68,9 @@ public static class ShellThumbnail
     /// </summary>
     public static ImageSource? Get(string path, int size, long stamp, bool allowDownload, bool thumbnailOnly = false)
     {
+        // 信頼していないサーバーにアイコン / リンク先を持つ .lnk は、シェルに読ませない
+        if (!Shortcut.IsSafeForShell(path))
+            return null;
         if (size > MaxCachedSize || thumbnailOnly)
             return Load(path, size, allowDownload, thumbnailOnly);
 
