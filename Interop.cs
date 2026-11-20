@@ -91,7 +91,10 @@ public static class IconCache
         if (TryGetCached(path, out var cached))
             return cached;
 
-        var icon = Load(path, 0, 0);
+        // 信頼していないサーバーにアイコン / リンク先を持つ .lnk は、シェルに読ませず汎用アイコンにする
+        var icon = Shortcut.IsSafeForShell(path)
+            ? Load(path, 0, 0)
+            : GetByExtension(".lnk", isDirectory: false);
         lock (_lock)
             _cache[path] = icon;
         return icon;

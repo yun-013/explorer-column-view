@@ -51,9 +51,9 @@ public sealed class SavedSearch
                 .Select(e => (Path: ResolveScopePath((string?)e.Attribute("path")),
                               Recursive: !string.Equals((string?)e.Attribute("nonRecursive"), "true", StringComparison.OrdinalIgnoreCase)))
                 .Where(s => s.Path is not null)
-                // ローカルで実在しない範囲は捨てる (ネットワーク上の範囲はここでは確かめない —
-                // 信頼できる相手かを呼び出し側が判断するまで触れないため)
-                .Where(s => Reachability.IsNetworkPath(s.Path) || Directory.Exists(s.Path))
+                // ローカルで実在しない範囲は捨てる (ローカルと確かめられない範囲はここでは
+                // 確かめない — 信頼できる相手かを呼び出し側が判断するまで触れないため)
+                .Where(s => !NetworkTrust.IsLocalPath(s.Path) || Directory.Exists(s.Path))
                 .Select(s => new Scope(s.Path!, s.Recursive))
                 .ToList();
             if (includes.Count == 0)

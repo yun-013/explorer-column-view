@@ -107,21 +107,51 @@ public static class Shortcut
             return new LinkTarget(LinkTargetKind.SavedSearch, target, search);
         }
 
+        // ファイルを指すもの (属性で分かる) は従来どおり「開く」対象。列には出さない
+        if (attributes != 0 && (attributes & System.IO.FileAttributes.Directory) == 0)
+            return null;
+        // 書き方 ("\\?\UNC\..." や "//host/..." 等) によらず、信頼できない場所には触れない
+        if (!Trusted(target))
+            return new LinkTarget(LinkTargetKind.NeedsConfirmation, target, null);
+
         // 届かない共有の存在確認は数十秒返ってこない。.lnk に記録されたリンク先の属性が
         // あればそれで決め (届かなければ列側が「届きません」と出す)、無ければ短く確かめる
-        if (Reachability.IsNetworkPath(target))
+        if (!NetworkTrust.IsLocalPath(target))
         {
-            // ファイルを指すもの (属性で分かる) は従来どおり「開く」対象。列には出さない
-            if (attributes != 0 && (attributes & System.IO.FileAttributes.Directory) == 0)
-                return null;
-            if (!Trusted(target))
-                return new LinkTarget(LinkTargetKind.NeedsConfirmation, target, null);
             if (attributes != 0)
                 return new LinkTarget(LinkTargetKind.Folder, target, null);
             if (!Reachability.IsReachableAsync(target).GetAwaiter().GetResult())
                 return null;
         }
         return System.IO.Directory.Exists(target) ? new LinkTarget(LinkTargetKind.Folder, target, null) : null;
+    }
+
+    /// <summary>この .lnk のアイコン・サムネイルをシェルに作らせてよいか。シェルはアイコンの置き場所
+    /// (無ければリンク先) を読みに行くので、どちらかが信頼していないサーバーにあると、フォルダを
+    /// 表示しただけでそこへ繋ぎに行ってしまう。判別できないもの (パスを持たないリンク等) も避ける。</summary>
+    public static bool IsSafeForShell(string linkPath)
+    {
+        if (!linkPath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (ResolveTarget(linkPath) is not { } target || !NetworkTrust.IsTrusted(target.Path))
+            return false;
+        var link = (IShellLinkW)new ShellLink();
+        try
+        {
+            ((IPersistFile)link).Load(linkPath, 0);
+            var buffer = new System.Text.StringBuilder(1024);
+            link.GetIconLocation(buffer, buffer.Capacity, out _);
+            return buffer.Length == 0
+                || NetworkTrust.IsTrusted(Environment.ExpandEnvironmentVariables(buffer.ToString()));
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            Marshal.FinalReleaseComObject(link);
+        }
     }
 
     /// <summary>.lnk に記録されたリンク先 (実パス) とその属性。リンク先を確かめに行かない
