@@ -211,10 +211,12 @@ public static class Shortcut
         if (targetExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
             || targetExtension.Equals(".url", StringComparison.OrdinalIgnoreCase))
             return IsSafeForShell(target.Path, depth + 1);
-        if ((target.Attributes & System.IO.FileAttributes.Directory) != 0
-            || (target.Attributes == 0 && System.IO.Directory.Exists(target.Path)))
+        // .lnk に記録された属性は書き換えられるので使わず、実物で確かめる
+        // (リンク先は信頼できる場所だと確認済みなので、触れてよい)。
+        // 「x.exe」という名前のフォルダもあり得るので、フォルダかどうかを先に見る
+        if (System.IO.Directory.Exists(target.Path))
             return IsSafeFolderIcon(target.Path);
-        return InertTargetExtensions.Contains(targetExtension);
+        return System.IO.File.Exists(target.Path) && InertTargetExtensions.Contains(targetExtension);
     }
 
     /// <summary>フォルダの desktop.ini に書かれたアイコンの置き場所 (IconResource / IconFile) が
@@ -233,18 +235,47 @@ public static class Shortcut
                 if (eq <= 0)
                     continue;
                 var key = line[..eq].Trim();
+                // Logo はフォルダの縮小表示に使う画像の置き場所
                 if (!key.Equals("IconResource", StringComparison.OrdinalIgnoreCase)
-                    && !key.Equals("IconFile", StringComparison.OrdinalIgnoreCase))
+                    && !key.Equals("IconFile", StringComparison.OrdinalIgnoreCase)
+                    && !key.Equals("Logo", StringComparison.OrdinalIgnoreCase))
                     continue;
-                var value = Environment.ExpandEnvironmentVariables(line[(eq + 1)..].Trim().Split(',')[0].Trim());
-                // 相対パスはフォルダからの位置
-                var resolved = System.IO.Path.IsPathFullyQualified(value) || value.StartsWith(@"\\", StringComparison.Ordinal)
-                    ? value
-                    : System.IO.Path.Combine(folder, value);
-                if (value.Length > 0 && !NetworkTrust.IsTrusted(resolved))
+                if (!IsSafeFolderIconValue(folder, line[(eq + 1)..]))
                     return false;
             }
             return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>desktop.ini の IconResource / IconFile の値 ("場所,番号") が信頼できるか。
+    /// Windows と同じく前後の空白と引用符を外してから判断し、それでも読み解けない書き方
+    /// (引用符が残る・途中に ":" がある等) は信頼しない。相対の名前はフォルダの中に
+    /// 収まるときだけ許す。</summary>
+    private static bool IsSafeFolderIconValue(string folder, string rawValue)
+    {
+        static string Unquote(string s) => s.Trim().Trim('"').Trim();
+
+        var value = Environment.ExpandEnvironmentVariables(Unquote(Unquote(rawValue).Split(',')[0]));
+        if (value.Length == 0)
+            return true;
+        if (value.Contains('"'))
+            return false;
+        // 絶対パス ("C:\..." / UNC / デバイス名前空間) は信頼の判定にそのまま任せる
+        if (value.StartsWith(@"\", StringComparison.Ordinal) || value.StartsWith("/", StringComparison.Ordinal)
+            || System.IO.Path.IsPathFullyQualified(value))
+            return NetworkTrust.IsTrusted(value);
+        // ここに来るのは相対の名前だけ。ドライブ相対 ("C:x") や ":" 入りは読み解かない
+        if (value.Contains(':'))
+            return false;
+        try
+        {
+            var root = System.IO.Path.GetFullPath(folder).TrimEnd('\\') + @"\";
+            var full = System.IO.Path.GetFullPath(System.IO.Path.Combine(folder, value));
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) && NetworkTrust.IsTrusted(full);
         }
         catch
         {
