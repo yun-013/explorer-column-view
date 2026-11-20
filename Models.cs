@@ -120,7 +120,11 @@ public class FileSystemItem : ObservableObject
         => _linkTarget ??= Task.Run(() => Shortcut.Classify(Path));
 
     /// <summary>調べ終わっていて、行き先を列で開く項目か (→ キーや Enter で次の列へ進める)。</summary>
-    public bool OpensAsColumn => _linkTarget is { IsCompletedSuccessfully: true, Result: not null };
+    public bool OpensAsColumn => _linkTarget is
+    {
+        IsCompletedSuccessfully: true,
+        Result: { Kind: not LinkTargetKind.NeedsConfirmation },
+    };
 
     /// <summary>アイコンをホーム列の生成時 (バックグラウンド) に確定済みの項目。
     /// UI スレッドからシェルに問い合わせない — 切断中のネットワークドライブや
