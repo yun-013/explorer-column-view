@@ -76,6 +76,27 @@ public class AppSettings
         Save();
     }
 
+    // ---- 誤操作の防止 / 操作履歴 ----
+
+    /// <summary>ドラッグを始めた場所の近くで離したとき、移動先の上で少し止まるまで
+    /// ドロップを確定しない (クリックのつもりの小さなずれで移動しないように)。</summary>
+    public bool DropGuard { get; set; } = true;
+
+    /// <summary>移動先として確定するまで、その上に止まっている時間 (ミリ秒)。</summary>
+    public int DropDwellMs { get; set; } = 300;
+
+    /// <summary>ドラッグを始めた場所からこれ以上 (DIP) 離れたことがあれば、止まらなくても確定する。</summary>
+    public double DropFarDistance { get; set; } = 60;
+
+    /// <summary>アプリ内でファイルのドラッグを始めるのに必要な移動量 (DIP)。システム既定より小さくはしない。</summary>
+    public double DragStartDistance { get; set; } = 8;
+
+    /// <summary>操作履歴に残す件数。</summary>
+    public int HistoryCapacity { get; set; } = 100;
+
+    /// <summary>移動・削除の直後に出す「元に戻す」通知の表示時間 (秒)。0 で出さない。</summary>
+    public int UndoToastSeconds { get; set; } = 10;
+
     // ---- セッション復元 ----
 
     /// <summary>起動時に前回のタブ構成を復元するか。</summary>

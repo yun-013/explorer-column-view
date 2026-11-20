@@ -105,7 +105,7 @@ public class MainViewModel : ObservableObject
 
     /// <summary>ファイル操作 (専用スレッドで実行) を 1 つずつ順番に通す。前の操作が終わって
     /// 取り消し履歴が積まれてから次へ進むので、実行中に Ctrl+Z を押しても順序が狂わない。
-    /// UndoStack と同じく全ウィンドウで共有する。</summary>
+    /// FileHistory と同じく全ウィンドウで共有する。</summary>
     private static readonly SemaphoreSlim _fileOpGate = new(1, 1);
 
     public async Task RenameAsync(FileSystemItem item, string newName)
@@ -132,7 +132,8 @@ public class MainViewModel : ObservableObject
                     File.Move(source, dest);
                 return true;
             });
-            UndoStack.Push(new RenameOp(source, dest));
+            FileHistory.Push(HistoryEntry.Create(HistoryKind.Rename, new RenameOp(source, dest),
+                new (string?, string?)[] { (source, dest) }));
             StatusText = $"名前を変更しました: {newName}";
         }
         catch (Exception ex)
@@ -1773,6 +1774,7 @@ public class MainViewModel : ObservableObject
         var owner = FileOps.ActiveWindow();
         IReadOnlyCollection<string> affected;
         string? error;
+        HistoryEntry? entry;
         await _fileOpGate.WaitAsync();
         try
         {
@@ -1783,7 +1785,7 @@ public class MainViewModel : ObservableObject
                 var a = FileOps.Transfer(files, targetDir, copy: !cut, out var e, out var p);
                 return (a, e, p);
             });
-            PushTransferUndo(performed, copy: !cut);
+            entry = PushTransferHistory(performed, cut ? HistoryKind.Move : HistoryKind.Copy);
         }
         finally
         {
@@ -1795,66 +1797,112 @@ public class MainViewModel : ObservableObject
             ClipboardMarks.Clear();
         }
         StatusText = error ?? (cut ? $"移動しました → {targetDir}" : $"貼り付けました → {targetDir}");
+        if (cut && entry is not null)
+            RaiseHistoryNotice(entry, $"移動しました: {entry.Summary}");
         await RefreshColumnsAsync(affected);
     }
 
-    private static void PushTransferUndo(List<(string Source, string Dest)> performed, bool copy,
-                                         string label = "コピー")
+    /// <summary>移動 / コピー / ショートカット作成の結果を履歴に積む。何もしていなければ null。</summary>
+    private static HistoryEntry? PushTransferHistory(List<(string Source, string Dest)> performed, HistoryKind kind)
     {
         if (performed.Count == 0)
-            return;
-        UndoStack.Push(copy
-            ? new RecycleOp(performed.Select(p => p.Dest).ToList(), label)
-            : new MoveOp(performed));
+            return null;
+        // コピー・リンクは「作られたものをごみ箱へ入れる」ことで元に戻せる
+        IUndoOp undo = kind == HistoryKind.Move
+            ? new MoveOp(performed)
+            : new RecycleOp(performed.Select(p => p.Dest));
+        var entry = HistoryEntry.Create(kind, undo,
+            performed.Select(p => ((string?)p.Source, (string?)p.Dest)).ToList());
+        FileHistory.Push(entry);
+        return entry;
     }
 
+    /// <summary>移動・削除など、気付かずにやってしまうと困る操作の直後に出す通知
+    /// (画面側が「元に戻す」付きのトーストを出す)。</summary>
+    public event Action<HistoryEntry, string>? HistoryNotice;
+
+    private void RaiseHistoryNotice(HistoryEntry entry, string message) => HistoryNotice?.Invoke(entry, message);
+
     /// <summary>直前のファイル操作 (名前変更 / 移動 / コピー / 新規フォルダ / 削除) を取り消す。</summary>
-    public Task UndoAsync() => UndoOrRedoAsync(redo: false);
+    public Task UndoAsync() => StepHistoryAsync(null, redo: false);
 
     /// <summary>取り消した操作をやり直す (Ctrl+Shift+Z / Ctrl+Y)。</summary>
-    public Task RedoAsync() => UndoOrRedoAsync(redo: true);
+    public Task RedoAsync() => StepHistoryAsync(null, redo: true);
 
-    /// <summary>取り消し / やり直しの本体 (移動・ごみ箱からの復元) を専用スレッドで実行する。
-    /// 実行中のファイル操作があれば、それが終わって履歴が積まれてから取り出す
-    /// (先に取り出すと、コピー中の Ctrl+Z が一つ前の操作を取り消してしまう)。</summary>
-    private async Task UndoOrRedoAsync(bool redo)
+    /// <summary>履歴の target まで (target を含む) 新しい順に取り消す。</summary>
+    public Task UndoToAsync(HistoryEntry target) => StepHistoryAsync(target, redo: false);
+
+    /// <summary>履歴の target まで (target を含む) 古い順にやり直す。</summary>
+    public Task RedoToAsync(HistoryEntry target) => StepHistoryAsync(target, redo: true);
+
+    /// <summary>取り消し / やり直しの本体 (移動・ごみ箱からの復元) を専用スレッドで 1 手ずつ実行する。
+    /// 実行中のファイル操作があれば、それが終わって履歴が積まれてから順番を決める
+    /// (先に決めると、コピー中の Ctrl+Z が一つ前の操作を取り消してしまう)。
+    /// どこかの手で問題が起きたら、そこで止めて理由を出す (それより前の手には進まない)。</summary>
+    private async Task StepHistoryAsync(HistoryEntry? target, bool redo)
     {
         var owner = FileOps.ActiveWindow();
-        IReadOnlyCollection<string> affected;
+        var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         await _fileOpGate.WaitAsync();
         try
         {
-            if ((redo ? UndoStack.PopRedo() : UndoStack.PopUndo()) is not { } op)
+            target ??= redo ? FileHistory.OldestUndone : FileHistory.LatestDone;
+            var chain = target is null ? new List<HistoryEntry>()
+                : redo ? FileHistory.RedoChain(target) : FileHistory.UndoChain(target);
+            if (chain.Count == 0)
             {
                 StatusText = redo ? "やり直す操作はありません" : "元に戻す操作はありません";
                 return;
             }
-            StatusText = redo ? "やり直しています…" : "元に戻しています…";
-            string? error;
-            (affected, error) = await FileWorker.RunAsync(owner, () =>
+
+            var completed = 0;
+            string? problem = null;
+            foreach (var entry in chain)
             {
-                var a = op.Undo(out var e);
-                return (a, e);
-            });
-            if (error is null)
-            {
-                // Inverse は Undo の実行後に呼ぶ規約 (RecycleOp は実行時の記録から逆操作を組む)
-                if (redo)
-                    UndoStack.PushUndoKeepRedo(op.Inverse());
-                else
-                    UndoStack.PushRedo(op.Inverse());
-                StatusText = redo ? $"やり直しました: {op.Description}" : $"元に戻しました: {op.Description}";
+                StatusText = (redo ? "やり直しています… " : "元に戻しています… ")
+                    + (chain.Count > 1 ? $"({completed + 1}/{chain.Count}) " : "") + entry.Title;
+                OpResult result;
+                try
+                {
+                    result = entry.Op is { } op ? await FileWorker.RunAsync(owner, op.Execute) : OpResult.Empty;
+                }
+                catch (Exception ex)
+                {
+                    problem = (redo ? "やり直せませんでした: " : "元に戻せませんでした: ") + ex.Message;
+                    break;
+                }
+                affected.UnionWith(result.Affected);
+                problem = FileHistory.Apply(entry, result);
+                if (problem is not null)
+                    break;
+                completed++;
             }
-            else
-            {
-                StatusText = error;
-            }
+
+            StatusText = problem is not null
+                ? (completed > 0 ? $"{completed} 件{(redo ? "やり直し" : "元に戻し")}たところで止めました。{problem}" : problem)
+                : chain.Count == 1
+                    ? $"{(redo ? "やり直しました" : "元に戻しました")}: {chain[0].Title}  {chain[0].Summary}"
+                    : $"{chain.Count} 件の操作を{(redo ? "やり直しました" : "元に戻しました")}";
         }
         finally
         {
             _fileOpGate.Release();
         }
         await RefreshColumnsAsync(affected);
+    }
+
+    /// <summary>path を含むフォルダを開き、path を選択する (履歴から場所を確かめる用)。</summary>
+    public async Task RevealPathAsync(string path)
+    {
+        path = path.TrimEnd(Path.DirectorySeparatorChar);
+        if (ActiveTab is null || Path.GetDirectoryName(path) is not { } parent)
+            return;
+        await NavigateToPathAsync(parent);
+        var column = ActiveTab.Columns.LastOrDefault(
+            c => string.Equals(c.Path, parent, StringComparison.OrdinalIgnoreCase));
+        if (column?.Items.FirstOrDefault(
+                i => string.Equals(i.Path, path, StringComparison.OrdinalIgnoreCase)) is { } item)
+            column.SelectedItem = item;
     }
 
     /// <summary>ClipboardMarks の現在の状態を、このウィンドウの全項目の表示に反映する。</summary>
@@ -1898,16 +1946,28 @@ public class MainViewModel : ObservableObject
             var useAppTrash = _settings.UseAppTrash;
             var r = await FileWorker.RunAsync(ownerHwnd, () => DeleteCore(recyclable, trashable, useAppTrash, ownerHwnd));
 
-            // 取り消し履歴は UI スレッドで積む (UndoStack は全ウィンドウ共有)
-            if (r.Recycled)
-                UndoStack.Push(new RestoreOp(recyclable, "削除"));
-            if (r.Trashed.Count > 0)
-                UndoStack.Push(new MoveOp(r.Trashed, "削除"));
+            // 取り消し履歴は UI スレッドで積む (FileHistory は全ウィンドウ共有)。
+            // ごみ箱と退避ごみ箱が混ざっても 1 手として記録する
+            var undo = UndoOps.Combine(new IUndoOp?[]
+            {
+                r.Recycled.Count > 0 ? new RestoreOp(r.Recycled) : null,
+                r.Trashed.Count > 0 ? new MoveOp(r.Trashed) : null,
+            });
+            HistoryEntry? entry = null;
+            if (undo is not null)
+            {
+                entry = HistoryEntry.Create(HistoryKind.Delete, undo,
+                    r.Recycled.Select(p => ((string?)p, (string?)null))
+                        .Concat(r.Trashed.Select(t => ((string?)t.Source, (string?)null))).ToList());
+                FileHistory.Push(entry);
+            }
 
-            var done = (r.Recycled ? recyclable.Count : 0) + r.Trashed.Count;
+            var done = r.Recycled.Count + r.Trashed.Count;
             StatusText = r.Error ?? (r.PermanentDone > 0 && done == 0
                 ? $"削除しました: {r.PermanentDone} 個"
                 : $"ごみ箱へ移動しました: {done} 個");
+            if (entry is not null)
+                RaiseHistoryNotice(entry, $"ごみ箱へ移動しました: {entry.Summary}");
             await RefreshColumnsAsync(r.Affected);
         }
         finally
@@ -1917,7 +1977,7 @@ public class MainViewModel : ObservableObject
     }
 
     private sealed record DeleteResult(
-        HashSet<string> Affected, string? Error, bool Recycled,
+        HashSet<string> Affected, string? Error, List<string> Recycled,
         List<(string Source, string Dest)> Trashed, int PermanentDone);
 
     /// <summary>削除の本体 (専用スレッドで実行)。ごみ箱の無い場所 (NAS 等) は退避ごみ箱へ。</summary>
@@ -1926,7 +1986,7 @@ public class MainViewModel : ObservableObject
     {
         var affected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         string? err = null;
-        var recycled = false;
+        var recycled = new List<string>();
         var trashed = new List<(string Source, string Dest)>();
         var permanentDone = 0;
 
@@ -1934,7 +1994,8 @@ public class MainViewModel : ObservableObject
         {
             affected.UnionWith(FileOps.Delete(recyclable, permanent: false, ownerHwnd, out var e));
             err ??= e;
-            recycled = e is null;
+            // 確認ダイアログでキャンセルされた項目は残っている。消えたものだけをごみ箱入りと見なす
+            recycled = recyclable.Where(p => !File.Exists(p) && !Directory.Exists(p)).ToList();
         }
         if (trashable.Count > 0)
         {
@@ -2000,7 +2061,8 @@ public class MainViewModel : ObservableObject
                     StatusText = $"『{name}』は既に存在します";
                     return;
                 }
-                UndoStack.Push(new RecycleOp(new[] { path }, "新しいフォルダ"));
+                FileHistory.Push(HistoryEntry.Create(HistoryKind.NewFolder, new RecycleOp(new[] { path }),
+                    new (string?, string?)[] { (null, path) }));
             }
             finally
             {
@@ -2033,6 +2095,7 @@ public class MainViewModel : ObservableObject
         IReadOnlyCollection<string> affected;
         string? error;
         List<(string Source, string Dest)> performed;
+        HistoryEntry? entry;
         await _fileOpGate.WaitAsync();
         try
         {
@@ -2050,8 +2113,12 @@ public class MainViewModel : ObservableObject
                 return (a, e, p);
             });
             // リンクもコピーと同じく「作られたものを消す」ことで元に戻せる
-            PushTransferUndo(performed, copy: mode != DropMode.Move,
-                             label: mode == DropMode.Link ? "ショートカット作成" : "コピー");
+            entry = PushTransferHistory(performed, mode switch
+            {
+                DropMode.Link => HistoryKind.Link,
+                DropMode.Copy => HistoryKind.Copy,
+                _ => HistoryKind.Move,
+            });
         }
         finally
         {
@@ -2066,6 +2133,9 @@ public class MainViewModel : ObservableObject
                 DropMode.Copy => $"コピーしました → {targetDir}",
                 _ => $"移動しました → {targetDir}",
             };
+        // ドラッグはクリックのつもりで起きることがあるので、何が起きたかを目立つ形でも出す
+        if (entry is not null)
+            RaiseHistoryNotice(entry, $"{entry.Title}しました: {entry.Summary}");
         // 実際に何か動いたときだけ再読込する。同じフォルダへの移動などの no-op で
         // 列を作り直すと、ドラッグ前の複数選択が単一復元に潰れてしまう
         if (performed.Count > 0)
