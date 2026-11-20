@@ -52,6 +52,11 @@ public class AppSettings
     /// キー: お気に入り=パス、グループ="group:"+Id。未登録のものは末尾。</summary>
     public List<string> HomeOrder { get; set; } = new();
 
+    /// <summary>ショートカット等の行き先として、選んだだけで繋ぎに行ってよいサーバー
+    /// (例: "100.96.170.68"、"nas.local")。割り当て済みドライブの接続先・お気に入り・
+    /// グループにあるサーバーは書かなくても信頼される (<see cref="NetworkTrust"/>)。</summary>
+    public List<string> TrustedNetworkHosts { get; set; } = new();
+
     // ---- 退避ごみ箱 (ごみ箱の無い NAS・リムーバブル用) ----
 
     /// <summary>false にすると退避せず、シェルの警告付き完全削除にする (取り消し不可)。</summary>
