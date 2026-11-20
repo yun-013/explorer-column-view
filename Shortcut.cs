@@ -198,13 +198,7 @@ public static class Shortcut
         // アイコンの置き場所を自前で持つなら、シェルはそこだけを読む (リンク先には聞かない)。
         // 置き場所自体がアイコンの置き場所を書ける形式なら許さない
         if (iconLocation.Length > 0)
-        {
-            var iconExtension = CleanExtension(iconLocation);
-            return NetworkTrust.IsTrusted(iconLocation)
-                && !OpaqueIconCarriers.Contains(iconExtension)
-                && !iconExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
-                && !iconExtension.Equals(".url", StringComparison.OrdinalIgnoreCase);
-        }
+            return IsTrustedIconFile(iconLocation);
 
         // 置き場所が無ければリンク先のアイコンになる
         var targetExtension = CleanExtension(target.Path);
@@ -267,7 +261,7 @@ public static class Shortcut
         // 絶対パス ("C:\..." / UNC / デバイス名前空間) は信頼の判定にそのまま任せる
         if (value.StartsWith(@"\", StringComparison.Ordinal) || value.StartsWith("/", StringComparison.Ordinal)
             || System.IO.Path.IsPathFullyQualified(value))
-            return NetworkTrust.IsTrusted(value);
+            return IsTrustedIconFile(value);
         // ここに来るのは相対の名前だけ。ドライブ相対 ("C:x") や ":" 入りは読み解かない
         if (value.Contains(':'))
             return false;
@@ -275,12 +269,25 @@ public static class Shortcut
         {
             var root = System.IO.Path.GetFullPath(folder).TrimEnd('\\') + @"\";
             var full = System.IO.Path.GetFullPath(System.IO.Path.Combine(folder, value));
-            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) && NetworkTrust.IsTrusted(full);
+            return full.StartsWith(root, StringComparison.OrdinalIgnoreCase) && IsTrustedIconFile(full);
         }
         catch
         {
             return false;
         }
+    }
+
+    /// <summary>アイコンの置き場所として名指しされたファイルを、シェルに読ませてよいか。
+    /// 信頼できる場所にあり、しかもそれ自体がさらに別のアイコンの置き場所を書ける形式
+    /// (.lnk / .url / .scf 等) でないこと。そうした形式だとシェルは中身を読んで先へ進むので、
+    /// ここで確かめた場所の外へ連れ出されうる。</summary>
+    private static bool IsTrustedIconFile(string path)
+    {
+        var extension = CleanExtension(path);
+        return NetworkTrust.IsTrusted(path)
+            && !OpaqueIconCarriers.Contains(extension)
+            && !extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+            && !extension.Equals(".url", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>インターネット ショートカット (.url) をシェルに読ませてよいか。シェルを通さずテキストとして読み、
