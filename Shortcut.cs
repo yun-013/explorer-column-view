@@ -126,19 +126,42 @@ public static class Shortcut
         return System.IO.Directory.Exists(target) ? new LinkTarget(LinkTargetKind.Folder, target, null) : null;
     }
 
-    /// <summary>この .lnk のアイコン・サムネイルをシェルに作らせてよいか。シェルはアイコンの置き場所
-    /// (無ければリンク先) を読みに行くので、どちらかが信頼していないサーバーにあると、フォルダを
-    /// 表示しただけでそこへ繋ぎに行ってしまう。判別できないもの (パスを持たないリンク等) も避ける。</summary>
-    public static bool IsSafeForShell(string linkPath)
+    /// <summary>このファイルのアイコン・サムネイルをシェルに作らせてよいか。.lnk / .url 等はシェルが
+    /// アイコンの置き場所 (無ければリンク先) を読みに行くので、どちらかが信頼していないサーバーに
+    /// あると、フォルダを表示しただけでそこへ繋ぎに行ってしまう。判別できないもの
+    /// (パスを持たないリンク・中身を読み解かない形式) も避ける。それ以外の形式は true。</summary>
+    public static bool IsSafeForShell(string linkPath) => IsSafeForShell(linkPath, depth: 0);
+
+    /// <summary>中身にアイコンの置き場所を書けるが、ここでは読み解かない形式。
+    /// シェルに任せず汎用アイコンで済ませる (どれも滅多に見ないので見た目の損は小さい)。</summary>
+    private static readonly HashSet<string> OpaqueIconCarriers = new(StringComparer.OrdinalIgnoreCase)
     {
-        if (!linkPath.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-            return true;
-        if (ResolveTarget(linkPath) is not { } target || !NetworkTrust.IsTrusted(target.Path))
+        ".scf", ".library-ms", ".searchconnector-ms", ".appref-ms", ".website",
+    };
+
+    private static bool IsSafeForShell(string path, int depth)
+    {
+        var extension = System.IO.Path.GetExtension(path);
+        if (OpaqueIconCarriers.Contains(extension))
             return false;
+        if (extension.Equals(".url", StringComparison.OrdinalIgnoreCase))
+            return IsSafeInternetShortcut(path);
+        if (!extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (ResolveTarget(path) is not { } target || !NetworkTrust.IsTrusted(target.Path))
+            return false;
+        // リンク先が .url や別の .lnk 等なら、シェルはそちらのアイコンの置き場所まで読みに行く
+        var targetExtension = System.IO.Path.GetExtension(target.Path);
+        var targetCarriesIcon = targetExtension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+            || targetExtension.Equals(".url", StringComparison.OrdinalIgnoreCase)
+            || OpaqueIconCarriers.Contains(targetExtension);
+        if (targetCarriesIcon && (depth >= 2 || !IsSafeForShell(target.Path, depth + 1)))
+            return false;
+
         var link = (IShellLinkW)new ShellLink();
         try
         {
-            ((IPersistFile)link).Load(linkPath, 0);
+            ((IPersistFile)link).Load(path, 0);
             var buffer = new System.Text.StringBuilder(1024);
             link.GetIconLocation(buffer, buffer.Capacity, out _);
             return buffer.Length == 0
@@ -151,6 +174,38 @@ public static class Shortcut
         finally
         {
             Marshal.FinalReleaseComObject(link);
+        }
+    }
+
+    /// <summary>インターネット ショートカット (.url) のアイコンの置き場所 (IconFile) と、
+    /// file: の URL が指す先が信頼できるか。シェルを通さず、テキストとして読む。</summary>
+    private static bool IsSafeInternetShortcut(string path)
+    {
+        try
+        {
+            foreach (var raw in System.IO.File.ReadLines(path))
+            {
+                var line = raw.Trim();
+                var eq = line.IndexOf('=');
+                if (eq <= 0)
+                    continue;
+                var key = line[..eq].Trim();
+                var value = Environment.ExpandEnvironmentVariables(line[(eq + 1)..].Trim());
+                if (value.Length == 0)
+                    continue;
+                if (key.Equals("IconFile", StringComparison.OrdinalIgnoreCase) && !NetworkTrust.IsTrusted(value))
+                    return false;
+                if (key.Equals("URL", StringComparison.OrdinalIgnoreCase)
+                    && value.StartsWith("file:", StringComparison.OrdinalIgnoreCase)
+                    // file://host/share/x の LocalPath は "\\host\share\x" になる
+                    && !(Uri.TryCreate(value, UriKind.Absolute, out var uri) && NetworkTrust.IsTrusted(uri.LocalPath)))
+                    return false;
+            }
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
