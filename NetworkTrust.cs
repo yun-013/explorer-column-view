@@ -60,6 +60,28 @@ public static class NetworkTrust
         if (string.IsNullOrWhiteSpace(path))
             return null;
         var p = path.Trim().Replace('/', '\\');
+
+        // "." / ".." を含む書き方は、Windows が解釈した後の場所で判断する
+        // ("\\.\C:\..\UNC\host\share" は "\\.\UNC\host\share" = ネットワークになる)。
+        // GetFullPath は文字列の正規化だけで、ネットワークには触れない。
+        // 相対パスや "\\?\" (Windows が正規化しない) で "." / ".." を含むものは信頼しない
+        if (HasDotSegment(p))
+        {
+            if (p.StartsWith(@"\\?\", StringComparison.Ordinal) || p.StartsWith(@"\??\", StringComparison.Ordinal)
+                || !Path.IsPathFullyQualified(p))
+                return null;
+            try
+            {
+                p = Path.GetFullPath(p);
+            }
+            catch
+            {
+                return null;
+            }
+            if (HasDotSegment(p))
+                return null;
+        }
+
         foreach (var prefix in new[] { @"\\?\UNC\", @"\\.\UNC\", @"\??\UNC\" })
             if (p.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
                 return @"\\" + p[prefix.Length..];
@@ -67,6 +89,16 @@ public static class NetworkTrust
             if (p.StartsWith(prefix, StringComparison.Ordinal))
                 return IsDriveLetterPath(p[prefix.Length..]) ? p[prefix.Length..] : null;
         return p;
+    }
+
+    /// <summary>"." か ".." だけの区切りを含むか (先頭の "\\.\" / "\\?\" の印は除く)。</summary>
+    private static bool HasDotSegment(string p)
+    {
+        var body = p.StartsWith(@"\\.\", StringComparison.Ordinal) || p.StartsWith(@"\\?\", StringComparison.Ordinal)
+            || p.StartsWith(@"\??\", StringComparison.Ordinal)
+            ? p[4..]
+            : p;
+        return body.Split('\\').Any(s => s is "." or "..");
     }
 
     /// <summary>"C:\..." の形 (ドライブ相対の "C:foo" は含めない)。</summary>
