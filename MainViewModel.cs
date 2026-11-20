@@ -1507,6 +1507,16 @@ public class MainViewModel : ObservableObject
             // 調べている間に別の項目が選ばれていたら、そちらに任せる
             if (selection != _selectionVersion || ActiveTab != tab || tab.Columns.IndexOf(column) != index)
                 return;
+            // 信頼していないサーバーを指すものは、選んだだけでは繋ぎに行かない
+            if (link.Kind == LinkTargetKind.NeedsConfirmation)
+            {
+                SetCurrentPath(item.Path, isDirectory: false);
+                tab.Title = TrimTitle(Path.GetFileName(Path.GetDirectoryName(item.Path)) ?? item.Name);
+                var where = NetworkTrust.HostOf(link.Path) is { } host ? $"ネットワーク上の場所 ({host})" : "ネットワーク上の場所";
+                StatusText = $"{item.Name} — {where} を指しています (Enter / ダブルクリックで開く)";
+                PreviewFollow?.Invoke(item);
+                return;
+            }
             await OpenLinkColumnAsync(tab, item, link);
             PreviewFollow?.Invoke(item);
             return;
@@ -1647,10 +1657,33 @@ public class MainViewModel : ObservableObject
     }
 
     /// <summary>列で開けないショートカット (アプリ・ファイルを指すもの) だけを普通に開く。
-    /// 列で開けるもので行き先の列がまだ出ていなければ (前回終了時に選ばれていたもの等)、ここで出す。</summary>
+    /// 列で開けるもので行き先の列がまだ出ていなければ (前回終了時に選ばれていたもの等)、ここで出す。
+    /// 信頼していないサーバーを指すものも、この明示操作のときだけ繋ぎに行って開く。</summary>
     private async Task OpenShortcutAsync(FileSystemItem item)
     {
-        if (await item.GetLinkTargetAsync() is not null)
+        var link = await item.GetLinkTargetAsync();
+        if (link is { Kind: LinkTargetKind.NeedsConfirmation })
+        {
+            StatusText = $"{item.Name} を開いています…";
+            var location = link.Path;
+            link = await Task.Run(() => Shortcut.Classify(item.Path, allowUntrusted: true));
+            // 届かなかった場所をシェルに開かせると、UI スレッドで接続待ちになる
+            if (link is null && Reachability.IsKnownUnreachable(location))
+            {
+                StatusText = $"接続先に届きません: {Reachability.ShareRoot(location) ?? location}";
+                return;
+            }
+            if (link is not null)
+            {
+                if (ActiveTab is { } tab && tab.Columns.LastOrDefault() is { } last && last.SelectedItem == item)
+                {
+                    _selectionVersion++;
+                    await OpenLinkColumnAsync(tab, item, link);
+                }
+                return;
+            }
+        }
+        else if (link is not null)
         {
             if (ActiveTab?.Columns.LastOrDefault() is { } last && last.SelectedItem == item)
                 await OnItemSelectedAsync(last, item);

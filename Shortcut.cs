@@ -2,10 +2,18 @@ using System.Runtime.InteropServices;
 
 namespace ColumnView;
 
-public enum LinkTargetKind { Folder, SavedSearch }
+public enum LinkTargetKind
+{
+    Folder,
+    SavedSearch,
+    /// <summary>信頼していないネットワーク上の場所を指す (<see cref="NetworkTrust"/>)。
+    /// 選んだだけでは繋がず、Enter / ダブルクリックのときに改めて調べて開く。</summary>
+    NeedsConfirmation,
+}
 
 /// <summary>列で開けるショートカットの行き先。Folder なら Path がフォルダ、
-/// SavedSearch なら Path が .search-ms で Search がその中身。</summary>
+/// SavedSearch なら Path が .search-ms で Search がその中身、
+/// NeedsConfirmation なら Path が信頼していない場所 (案内表示用)。</summary>
 public sealed record LinkTarget(LinkTargetKind Kind, string Path, SavedSearch? Search);
 
 /// <summary>
@@ -37,8 +45,11 @@ public static class Shortcut
         try
         {
             ((IPersistFile)link).Load(linkPath, 0);
-            // リンク先が見つからないときに検索ダイアログを出させない (UI を持たないプレビューのため)
-            link.Resolve(IntPtr.Zero, SLR_NO_UI | SLR_NOSEARCH | SLR_NOTRACK | SLR_NOUPDATE);
+            // リンク先が見つからないときに検索ダイアログを出させない (UI を持たないプレビューのため)。
+            // Resolve はリンク先を確かめに行くので、信頼していないサーバーを指すときはしない
+            // (選択に追従するプレビューだけで、そのサーバーに繋ぎに行かせないため)
+            if (NetworkTrust.IsTrusted(Get(b => link.GetPath(b, b.Capacity, IntPtr.Zero, 0))))
+                link.Resolve(IntPtr.Zero, SLR_NO_UI | SLR_NOSEARCH | SLR_NOTRACK | SLR_NOUPDATE);
             return new LinkInfo(Get(b => link.GetPath(b, b.Capacity, IntPtr.Zero, 0)),
                                 Get(b => link.GetArguments(b, b.Capacity)),
                                 Get(b => link.GetWorkingDirectory(b, b.Capacity)),
@@ -64,8 +75,10 @@ public static class Shortcut
     /// <summary>ショートカット (.lnk) や保存された検索 (.search-ms) を列で開けるか調べる。
     /// フォルダを指すならその中身、保存された検索なら検索結果を次の列に出す。
     /// それ以外 (アプリやファイルを指す・読めない) は null で、従来どおり開く対象になる。
-    /// リンク先やネットワークに触れることがあるので、裏スレッドから呼ぶこと。</summary>
-    public static LinkTarget? Classify(string path)
+    /// リンク先やネットワークに触れることがあるので、裏スレッドから呼ぶこと。
+    /// 信頼していないサーバー (<see cref="NetworkTrust"/>) には触れずに NeedsConfirmation を返す。
+    /// <paramref name="allowUntrusted"/>=true (Enter / ダブルクリックで開くとき) ならそのまま調べる。</summary>
+    public static LinkTarget? Classify(string path, bool allowUntrusted = false)
     {
         string target;
         var attributes = (System.IO.FileAttributes)0;
@@ -80,19 +93,31 @@ public static class Shortcut
             target = path;
         }
 
+        bool Trusted(string location) => allowUntrusted || NetworkTrust.IsTrusted(location);
+
         if (target.EndsWith(".search-ms", StringComparison.OrdinalIgnoreCase))
-            return SavedSearch.Load(target) is { } search
-                ? new LinkTarget(LinkTargetKind.SavedSearch, target, search)
-                : null;
+        {
+            // .search-ms 自体も、その検索範囲も、信頼していない場所なら読みに行かない
+            if (!Trusted(target))
+                return new LinkTarget(LinkTargetKind.NeedsConfirmation, target, null);
+            if (SavedSearch.Load(target) is not { } search)
+                return null;
+            if (search.Includes.FirstOrDefault(s => !Trusted(s.Path)) is { Path: { } untrusted })
+                return new LinkTarget(LinkTargetKind.NeedsConfirmation, untrusted, null);
+            return new LinkTarget(LinkTargetKind.SavedSearch, target, search);
+        }
 
         // 届かない共有の存在確認は数十秒返ってこない。.lnk に記録されたリンク先の属性が
         // あればそれで決め (届かなければ列側が「届きません」と出す)、無ければ短く確かめる
         if (Reachability.IsNetworkPath(target))
         {
+            // ファイルを指すもの (属性で分かる) は従来どおり「開く」対象。列には出さない
+            if (attributes != 0 && (attributes & System.IO.FileAttributes.Directory) == 0)
+                return null;
+            if (!Trusted(target))
+                return new LinkTarget(LinkTargetKind.NeedsConfirmation, target, null);
             if (attributes != 0)
-                return (attributes & System.IO.FileAttributes.Directory) != 0
-                    ? new LinkTarget(LinkTargetKind.Folder, target, null)
-                    : null;
+                return new LinkTarget(LinkTargetKind.Folder, target, null);
             if (!Reachability.IsReachableAsync(target).GetAwaiter().GetResult())
                 return null;
         }
@@ -140,22 +165,6 @@ public static class Shortcut
         }
     }
 
-    /// <summary>シェルの解析名 ("::{CLSID}\storage" など) を実パスに直す。
-    /// ファイルシステム上に無い場所なら null。</summary>
-    public static string? PathFromParsingName(string parsingName)
-    {
-        if (SHParseDisplayName(parsingName, IntPtr.Zero, out var pidl, 0, out _) != 0 || pidl == IntPtr.Zero)
-            return null;
-        try
-        {
-            return PathFromIDList(pidl);
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(pidl);
-        }
-    }
-
     private static string? PathFromIDList(IntPtr pidl)
     {
         var buffer = new System.Text.StringBuilder(32768);
@@ -163,9 +172,6 @@ public static class Shortcut
             ? buffer.ToString()
             : null;
     }
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    private static extern int SHParseDisplayName(string name, IntPtr bindingContext, out IntPtr pidl, uint sfgaoIn, out uint sfgaoOut);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]

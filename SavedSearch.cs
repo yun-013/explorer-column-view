@@ -51,6 +51,9 @@ public sealed class SavedSearch
                 .Select(e => (Path: ResolveScopePath((string?)e.Attribute("path")),
                               Recursive: !string.Equals((string?)e.Attribute("nonRecursive"), "true", StringComparison.OrdinalIgnoreCase)))
                 .Where(s => s.Path is not null)
+                // ローカルで実在しない範囲は捨てる (ネットワーク上の範囲はここでは確かめない —
+                // 信頼できる相手かを呼び出し側が判断するまで触れないため)
+                .Where(s => Reachability.IsNetworkPath(s.Path) || Directory.Exists(s.Path))
                 .Select(s => new Scope(s.Path!, s.Recursive))
                 .ToList();
             if (includes.Count == 0)
@@ -84,16 +87,47 @@ public sealed class SavedSearch
     private static IEnumerable<XElement> Children(XElement? parent, string name)
         => parent?.Elements().Where(e => e.Name.LocalName == name) ?? Enumerable.Empty<XElement>();
 
-    /// <summary>範囲のパスを実パスに直す。"::{CLSID}\storage" のようなシェルの名前は
-    /// シェルに解決させる (接続デバイス フォルダはこの形で書かれている)。</summary>
+    /// <summary>範囲のパスを実パスに直す。ネットワークには触れない (信頼できるかは呼び出し側が
+    /// 実パスで判断する)。"::{CLSID}\storage" のようなシェルの名前は、実フォルダを
+    /// 持つ登録済みのフォルダ (接続デバイス フォルダ・クラウド同期フォルダ等) だけを
+    /// レジストリから直す。シェルに解析させると、名前によってはその場で相手のサーバーへ
+    /// 繋ぎに行くため使わない。直せない名前の範囲は捨てる。</summary>
     private static string? ResolveScopePath(string? path)
     {
         if (string.IsNullOrWhiteSpace(path))
             return null;
         path = Environment.ExpandEnvironmentVariables(path);
-        if (System.IO.Path.IsPathFullyQualified(path) && !path.StartsWith("::", StringComparison.Ordinal))
-            return System.IO.Path.TrimEndingDirectorySeparator(path);
-        return Shortcut.PathFromParsingName(path);
+        if (path.StartsWith("::{", StringComparison.Ordinal))
+        {
+            var end = path.IndexOf('}');
+            if (end < 0 || DelegateFolderTarget(path[2..(end + 1)]) is not { } root)
+                return null;
+            var rest = path[(end + 1)..].TrimStart('\\');
+            return rest.Length == 0 ? root : System.IO.Path.Combine(root, rest);
+        }
+        return System.IO.Path.IsPathFullyQualified(path)
+            ? System.IO.Path.TrimEndingDirectorySeparator(path)
+            : null;
+    }
+
+    /// <summary>実フォルダを指す登録済みのシェルフォルダ (CLSID\Instance\InitPropertyBag の
+    /// TargetFolderPath) の実パス。そうでない CLSID なら null。</summary>
+    private static string? DelegateFolderTarget(string clsid)
+    {
+        foreach (var hive in new[] { Registry.CurrentUser, Registry.LocalMachine })
+        {
+            try
+            {
+                using var bag = hive.OpenSubKey($@"Software\Classes\CLSID\{clsid}\Instance\InitPropertyBag");
+                if (bag?.GetValue("TargetFolderPath") is string target && target.Length > 0)
+                    return System.IO.Path.TrimEndingDirectorySeparator(Environment.ExpandEnvironmentVariables(target));
+            }
+            catch
+            {
+                // 読めなければ次へ
+            }
+        }
+        return null;
     }
 
     /// <summary>種類名 (picture・video 等) から拡張子の集合を作る。
