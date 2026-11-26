@@ -41,14 +41,19 @@
                 <TranslateTransform X="4" Y="4"/>
             </Border.RenderTransform>
         </Border>
-        <!-- 掴んでいる項目本体。BorderBrush はドロップ効果に応じて SetEffect が差し替える -->
+        <!-- 掴んでいる項目本体。紙と枠は中の CardPaper が描く -->
         <Border x:Name="Card"
-                Background="{DynamicResource SurfaceBrush}"
-                BorderBrush="{DynamicResource AccentDropBorderBrush}"
+                Background="Transparent"
                 BorderThickness="1.5"
                 CornerRadius="8"
-                Padding="8,6"
-                Effect="{DynamicResource MenuShadow}">
+                Padding="8,6">
+            <Grid>
+            <!-- 地・枠・影は中身の無い台紙が描く (カード自体に影を掛けると中の文字がにじむ。App.xaml の ShadowCaster)。
+                 枠色はドロップ効果に応じて SetEffect がこの CardPaper に差し替える -->
+            <Border x:Name="CardPaper" Style="{StaticResource ShadowCaster}" Margin="-9.5,-7.5"
+                    Background="{DynamicResource SurfaceBrush}"
+                    BorderBrush="{DynamicResource AccentDropBorderBrush}"
+                    Effect="{DynamicResource MenuShadow}"/>
             <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                 <Image x:Name="IconImage" Width="20" Height="20" Margin="0,0,6,0" Stretch="Uniform"/>
                 <TextBlock x:Name="NameText" VerticalAlignment="Center"
@@ -72,6 +77,7 @@
                     </StackPanel>
                 </Border>
             </StackPanel>
+            </Grid>
         </Border>
         <!-- 複数選択時の件数バッジ (カードの右上角に重ねる) -->
         <Border x:Name="CountBadge"
