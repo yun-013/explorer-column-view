@@ -1258,7 +1258,8 @@ public partial class MainWindow : Window
             (listBox.ItemContainerGenerator.ContainerFromItem(current) as ListBoxItem)?.Focus();
         }
 
-        switch (e.Key)
+        // IME オンのときのスペースは Key.ImeProcessed で届くので、実際のキーで判定する
+        switch (e.EffectiveKey())
         {
             case Key.C when ctrl:
                 _vm.CopyToClipboard(SelectedFilePaths(listBox), cut: false);
@@ -2404,7 +2405,7 @@ public partial class MainWindow : Window
         // 他アプリから戻った直後は列 (ListBox) にフォーカスが無いことがあり、
         // 列のハンドラーだけに頼ると「キーが効かない」ように見えるため
         if (Keyboard.Modifiers == ModifierKeys.None
-            && e.Key is Key.Space or Key.Escape
+            && e.EffectiveKey() is Key.Space or Key.Escape
             && Keyboard.FocusedElement is not TextBox
             && _quickLook is { IsVisible: true })
         {

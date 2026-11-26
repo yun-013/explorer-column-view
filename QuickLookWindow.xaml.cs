@@ -987,7 +987,7 @@ public partial class QuickLookWindow : Window
     /// <summary>プレビューにフォーカスが渡ってしまった場合の保険。Space / Esc で必ず閉じる。</summary>
     private void QuickLookWindow_PreviewKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key is Key.Space or Key.Escape)
+        if (e.EffectiveKey() is Key.Space or Key.Escape)
         {
             e.Handled = true;
             CloseQuickLook();
