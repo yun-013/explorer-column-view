@@ -189,7 +189,7 @@ public partial class DragGhostWindow : Window
             // 掴んだ直後 (元のフォルダの上) も、受け付けないターゲットの上も同じ状態で、
             // 利用者から見た結果が同じである以上、見た目を分ける理由がない。
             // 置けないことの明示は OS の禁止カーソルに任せる。
-            Card.BorderBrush = (Brush)FindResource("AccentDropBorderBrush");
+            CardPaper.BorderBrush = (Brush)FindResource("AccentDropBorderBrush");
             EffectBadge.Visibility = Visibility.Collapsed;
             return;
         }
@@ -205,7 +205,7 @@ public partial class DragGhostWindow : Window
         };
         var accent = (Brush)FindResource(accentKey);
 
-        Card.BorderBrush = accent;
+        CardPaper.BorderBrush = accent;
         EffectBadge.Background = (Brush)FindResource(tintKey);
         EffectBadge.Visibility = Visibility.Visible;
         EffectGlyph.Foreground = accent;

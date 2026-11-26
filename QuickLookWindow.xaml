@@ -121,12 +121,15 @@
 
     <!-- 影のための余白。中身だけを角丸で見せる (タイトルバー・枠は一切なし) -->
     <Border x:Name="Card" Margin="18" CornerRadius="12"
-            Background="{DynamicResource SurfaceBrush}"
-            Effect="{DynamicResource CardShadowBelow}"
+            Background="Transparent"
             SnapsToDevicePixels="True" SizeChanged="Card_SizeChanged"
             MouseEnter="Card_MouseEnter" MouseLeave="Card_MouseLeave"
             PreviewMouseWheel="Card_PreviewMouseWheel">
-        <!-- 影はアプリ共通の「紙の影」 -->
+        <Grid>
+        <!-- 地と影 (アプリ共通の「紙の影」) は中身の無い台紙が描く。カード自体に影を掛けると中の文字や画像が
+             にじむため (App.xaml の ShadowCaster)。Host は ClipToBounds なのでその外に置く -->
+        <Border Style="{StaticResource ShadowCaster}" SnapsToDevicePixels="True"
+                Background="{DynamicResource SurfaceBrush}" Effect="{DynamicResource CardShadowBelow}"/>
 
         <Grid x:Name="Host" ClipToBounds="True">
             <!-- 画像 / シェルの大サムネイル (フォールバック) -->
@@ -239,6 +242,7 @@
                     </ControlTemplate>
                 </Button.Template>
             </Button>
+        </Grid>
         </Grid>
     </Border>
 </Window>

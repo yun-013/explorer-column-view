@@ -61,6 +61,18 @@
         <DropShadowEffect x:Key="NoteShadow" Color="#3A2A18" Opacity="0.17" BlurRadius="4" ShadowDepth="2.2" Direction="315"/>
         <DropShadowEffect x:Key="SubtleShadow" Color="#3A2A18" Opacity="0.14" BlurRadius="3" ShadowDepth="1.5" Direction="315"/>
 
+        <!-- カードの紙 (地・枠・影) だけを描く台紙。文字やアイコンを含む要素に Effect を直接掛けると、
+             中身ごと一度画像にしてから貼るため、125%・150% などの表示倍率では文字がにじみ ClearType も効かなくなる。
+             そこで地・枠・影はこの中身の無い台紙が描き、包んでいる Border は透明 (Background="Transparent" で
+             クリックだけ受ける) にして、台紙を最初の子として置く。枠の太さと角丸は包んでいる Border から写し、
+             Margin で枠の外周 (BorderThickness + Padding の外側) まで広げて同じ輪郭にする。
+             紙を描くのは台紙 1 枚だけなので、地・枠・影の画素は Effect を直接掛けていたときと同じになる -->
+        <Style x:Key="ShadowCaster" TargetType="Border">
+            <Setter Property="IsHitTestVisible" Value="False"/>
+            <Setter Property="BorderThickness" Value="{Binding BorderThickness, RelativeSource={RelativeSource AncestorType=Border}}"/>
+            <Setter Property="CornerRadius" Value="{Binding CornerRadius, RelativeSource={RelativeSource AncestorType=Border}}"/>
+        </Style>
+
         <!-- 字形 (Segoe のコードポイント文字列) を Content に持つボタン用: Icon で描く -->
         <DataTemplate x:Key="IconContent">
             <local:Icon Glyph="{Binding}"/>
@@ -307,11 +319,15 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ContextMenu">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1"
-                                CornerRadius="10" Padding="4" Margin="6"
-                                Effect="{DynamicResource MenuShadow}">
-                            <ItemsPresenter/>
+                        <Border Background="Transparent" BorderThickness="1"
+                                CornerRadius="10" Padding="4" Margin="6">
+                            <Grid>
+                                <Border Style="{StaticResource ShadowCaster}" Margin="-5"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{TemplateBinding BorderBrush}"
+                                        Effect="{DynamicResource MenuShadow}"/>
+                                <ItemsPresenter/>
+                            </Grid>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
@@ -350,11 +366,15 @@
                                 <Popup x:Name="PART_Popup" Placement="Right" HorizontalOffset="-2" VerticalOffset="-8"
                                        IsOpen="{TemplateBinding IsSubmenuOpen}" AllowsTransparency="True"
                                        Focusable="False" PopupAnimation="Fade">
-                                    <Border Background="{DynamicResource SurfaceBrush}"
-                                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
-                                            CornerRadius="10" Padding="4" Margin="6"
-                                            Effect="{DynamicResource MenuShadow}">
-                                        <ItemsPresenter/>
+                                    <Border Background="Transparent" BorderThickness="1"
+                                            CornerRadius="10" Padding="4" Margin="6">
+                                        <Grid>
+                                            <Border Style="{StaticResource ShadowCaster}" Margin="-5"
+                                                    Background="{DynamicResource SurfaceBrush}"
+                                                    BorderBrush="{DynamicResource BorderSoftBrush}"
+                                                    Effect="{DynamicResource MenuShadow}"/>
+                                            <ItemsPresenter/>
+                                        </Grid>
                                     </Border>
                                 </Popup>
                             </Grid>
@@ -400,11 +420,15 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ToolTip">
-                        <Border Background="{TemplateBinding Background}"
-                                BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
-                                CornerRadius="8" Padding="10,7" Margin="6"
-                                Effect="{DynamicResource MenuShadow}">
-                            <ContentPresenter/>
+                        <Border Background="Transparent" BorderThickness="1"
+                                CornerRadius="8" Padding="10,7" Margin="6">
+                            <Grid>
+                                <Border Style="{StaticResource ShadowCaster}" Margin="-11,-8"
+                                        Background="{TemplateBinding Background}"
+                                        BorderBrush="{DynamicResource BorderSoftBrush}"
+                                        Effect="{DynamicResource MenuShadow}"/>
+                                <ContentPresenter/>
+                            </Grid>
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>

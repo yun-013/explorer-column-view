@@ -149,8 +149,27 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <!-- Outer: 接地影 / Root: 向きのある影 (影は 1 要素に 1 つなので入れ子にする) -->
-                        <Grid x:Name="Outer">
+                        <Grid>
+                        <!-- アクティブタブの紙 (地・すそ野・影)。文字入りのタブ本体に Effect を掛けると文字がにじむので、
+                             紙は中身の無いこの台紙だけが描き、文字はその上に影なしで載せる (App.xaml の ShadowCaster と同じ考え方)。
+                             ActivePaper: 接地影 / その内側: 向きのある影 (影は 1 要素に 1 つなので入れ子にする)。
+                             紙の幅は Bd と同じ MinWidth/MaxWidth で決まり、Bd と同じ位置に重なる -->
+                        <Grid x:Name="ActivePaper" Visibility="Collapsed" IsHitTestVisible="False"
+                              Effect="{DynamicResource SheetContactShadow}">
+                            <Grid Effect="{DynamicResource SheetShadow}">
+                                <Border CornerRadius="10,10,0,0" Background="{DynamicResource WindowBackgroundBrush}"
+                                        MinWidth="130" MaxWidth="220"/>
+                                <!-- 「すそ野」: 付け根が外側へなだらかに広がる凹みの丸み (Chrome/Files 風) -->
+                                <Path Width="8" Height="8" Stretch="None"
+                                      HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-8,0,0,0"
+                                      Fill="{DynamicResource WindowBackgroundBrush}"
+                                      Data="M 8,0 A 8,8 0 0 1 0,8 L 8,8 Z"/>
+                                <Path Width="8" Height="8" Stretch="None"
+                                      HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-8,0"
+                                      Fill="{DynamicResource WindowBackgroundBrush}"
+                                      Data="M 0,0 A 8,8 0 0 0 8,8 L 0,8 Z"/>
+                            </Grid>
+                        </Grid>
                         <Grid x:Name="Root">
                             <Border x:Name="Bd" CornerRadius="10,10,0,0" Background="Transparent"
                                     Padding="11,7" MinWidth="130" MaxWidth="220">
@@ -169,15 +188,6 @@
                             <!-- 非アクティブタブ同士の区切り線 (Files 風) -->
                             <Border x:Name="Sep" Width="1" Height="14" Background="{DynamicResource WindowOuterBorderBrush}"
                                     HorizontalAlignment="Right" VerticalAlignment="Center"/>
-                            <!-- アクティブタブの「すそ野」: 付け根が外側へなだらかに広がる凹みの丸み (Chrome/Files 風) -->
-                            <Path x:Name="FlareL" Width="8" Height="8" Stretch="None" Visibility="Collapsed"
-                                  HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="-8,0,0,0"
-                                  Fill="{DynamicResource WindowBackgroundBrush}"
-                                  Data="M 8,0 A 8,8 0 0 1 0,8 L 8,8 Z"/>
-                            <Path x:Name="FlareR" Width="8" Height="8" Stretch="None" Visibility="Collapsed"
-                                  HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-8,0"
-                                  Fill="{DynamicResource WindowBackgroundBrush}"
-                                  Data="M 0,0 A 8,8 0 0 0 8,8 L 0,8 Z"/>
                         </Grid>
                         </Grid>
                         <ControlTemplate.Triggers>
@@ -186,17 +196,15 @@
                                 <Setter TargetName="Sep" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="TabTitle" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                             </Trigger>
-                            <!-- アクティブタブは下のウィンドウ背景と同色にして繋げ、文字を濃く・太くして際立たせる -->
+                            <!-- アクティブタブは下のウィンドウ背景と同色の紙 (ActivePaper) にして繋げ、文字を濃く・太くして際立たせる。
+                                 紙の色は ActivePaper が塗るので、Bd はホバー色を消して透明に戻す -->
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource WindowBackgroundBrush}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="Transparent"/>
                                 <Setter TargetName="Sep" Property="Visibility" Value="Collapsed"/>
                                 <Setter TargetName="TabTitle" Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
                                 <Setter TargetName="TabTitle" Property="FontWeight" Value="SemiBold"/>
-                                <Setter TargetName="FlareL" Property="Visibility" Value="Visible"/>
-                                <Setter TargetName="FlareR" Property="Visibility" Value="Visible"/>
-                                <!-- タブとすそ野の輪郭に紙の影 (下側はタブ列の境界で切れるので、下の帯とは地続きのまま) -->
-                                <Setter TargetName="Root" Property="Effect" Value="{DynamicResource SheetShadow}"/>
-                                <Setter TargetName="Outer" Property="Effect" Value="{DynamicResource SheetContactShadow}"/>
+                                <!-- タブとすそ野の紙と影 (下側はタブ列の境界で切れるので、下の帯とは地続きのまま) -->
+                                <Setter TargetName="ActivePaper" Property="Visibility" Value="Visible"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -450,15 +458,19 @@
                             <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"
                                    AllowsTransparency="True" Placement="Bottom" VerticalOffset="-2"
                                    PopupAnimation="Fade" StaysOpen="False">
-                                <Border Background="{DynamicResource SurfaceBrush}"
-                                        BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
+                                <Border Background="Transparent" BorderThickness="1"
                                         CornerRadius="10" Padding="4" Margin="6"
-                                        Effect="{DynamicResource MenuShadow}"
                                         MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}">
-                                    <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}"
-                                                  VerticalScrollBarVisibility="Auto">
-                                        <ItemsPresenter/>
-                                    </ScrollViewer>
+                                    <Grid>
+                                        <Border Style="{StaticResource ShadowCaster}" Margin="-5"
+                                                Background="{DynamicResource SurfaceBrush}"
+                                                BorderBrush="{DynamicResource BorderSoftBrush}"
+                                                Effect="{DynamicResource MenuShadow}"/>
+                                        <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}"
+                                                      VerticalScrollBarVisibility="Auto">
+                                            <ItemsPresenter/>
+                                        </ScrollViewer>
+                                    </Grid>
                                 </Border>
                             </Popup>
                         </Grid>
@@ -547,12 +559,14 @@
             <DockPanel>
 
             <!-- ツールバー: 独立した浮遊カード -->
-            <Border x:Name="ToolbarCard" DockPanel.Dock="Top" Background="{DynamicResource SurfaceBrush}"
-                    Margin="6,4,6,4" CornerRadius="12"
-                    BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
-                    Effect="{DynamicResource CardShadowBelow}"
+            <Border x:Name="ToolbarCard" DockPanel.Dock="Top" Background="Transparent"
+                    Margin="6,4,6,4" CornerRadius="12" BorderThickness="1"
                     SizeChanged="Toolbar_SizeChanged">
                 <Grid>
+                <!-- 地・枠・影は中身の無い台紙が描く (カード自体に影を掛けると中の文字がにじむ。App.xaml の ShadowCaster) -->
+                <Border Style="{StaticResource ShadowCaster}" Margin="-1"
+                        Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderSoftBrush}"
+                        Effect="{DynamicResource CardShadowBelow}"/>
                 <!-- ごく薄い紙の地合い (App.MakePaperTexture) -->
                 <Border Background="{DynamicResource PaperTextureBrush}" CornerRadius="11" IsHitTestVisible="False"/>
                 <DockPanel Margin="7">
@@ -614,10 +628,11 @@
 
                     <!-- 検索ボックス: 現在のフォルダ以下を名前で検索 (Enter で実行) -->
                     <Border x:Name="SearchBorder" DockPanel.Dock="Right" Width="170" Height="32" Margin="2,0"
-                            Background="{DynamicResource SurfaceBrush}"
-                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
-                            Effect="{DynamicResource SubtleShadow}">
+                            Background="Transparent" BorderThickness="1" CornerRadius="10">
                         <Grid>
+                            <Border Style="{StaticResource ShadowCaster}" Margin="-1"
+                                    Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderSoftBrush}"
+                                    Effect="{DynamicResource SubtleShadow}"/>
                             <local:Icon FontSize="12" Glyph="&#xE721;"
                                        Foreground="{DynamicResource TextSecondaryBrush}"
                                        VerticalAlignment="Center" Margin="9,0,0,0"/>
@@ -663,12 +678,15 @@
                     </Border>
 
                     <!-- アドレスバー: カードの上にさらに浮かぶ入力欄 (二重シャドウ) -->
-                    <Border x:Name="AddressBar" Margin="6,0" Height="32" Background="{DynamicResource SurfaceBrush}"
-                            BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1" CornerRadius="10"
-                            Effect="{DynamicResource SubtleShadow}" Cursor="IBeam"
+                    <Border x:Name="AddressBar" Margin="6,0" Height="32" Background="Transparent"
+                            BorderThickness="1" CornerRadius="10"
+                            Cursor="IBeam"
                             MouseLeftButtonDown="AddressBar_MouseLeftButtonDown"
                             PreviewMouseWheel="AddressBar_PreviewMouseWheel">
                         <Grid>
+                            <Border Style="{StaticResource ShadowCaster}" Margin="-1"
+                                    Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderSoftBrush}"
+                                    Effect="{DynamicResource SubtleShadow}"/>
                             <DockPanel>
                                 <DockPanel.Style>
                                     <Style TargetType="DockPanel">
@@ -741,10 +759,13 @@
             </StatusBar>
 
             <!-- カラム表示: 独立した浮遊カード (背景をこのカード1枚に統一し、開いている列と余白の色差を無くす) -->
-            <Border x:Name="ColumnsCard" Margin="6,0,6,2" CornerRadius="12" Background="{DynamicResource SurfaceBrush}"
-                    BorderBrush="{DynamicResource BorderSoftBrush}" BorderThickness="1"
-                    Effect="{DynamicResource CardShadowBelow}">
+            <Border x:Name="ColumnsCard" Margin="6,0,6,2" CornerRadius="12" Background="Transparent"
+                    BorderThickness="1">
             <Grid>
+            <!-- 地・枠・影は中身の無い台紙が描く (カード自体に影を掛けると中の文字がにじむ。App.xaml の ShadowCaster) -->
+            <Border Style="{StaticResource ShadowCaster}" Margin="-1"
+                    Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource BorderSoftBrush}"
+                    Effect="{DynamicResource CardShadowBelow}"/>
             <!-- ごく薄い紙の地合い (App.MakePaperTexture)。スクロールしても動かない -->
             <Border Background="{DynamicResource PaperTextureBrush}" CornerRadius="11" IsHitTestVisible="False"/>
             <!-- 角丸クリップはカードではなく中身に掛ける (カードに掛けると外側の影ごと切られて消える) -->
@@ -862,10 +883,13 @@
             <Border x:Name="UndoToast" Visibility="Collapsed"
                     HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="16,0,16,16"
                     MaxWidth="680" Padding="12,5,5,5" CornerRadius="10"
-                    Background="{DynamicResource SurfaceBrush}"
-                    BorderBrush="{DynamicResource WindowOuterBorderBrush}" BorderThickness="1"
-                    Effect="{DynamicResource SheetShadow}"
+                    Background="Transparent" BorderThickness="1"
                     MouseEnter="UndoToast_MouseEnter" MouseLeave="UndoToast_MouseLeave">
+                <Grid>
+                <!-- 地・枠・影は中身の無い台紙が描く (App.xaml の ShadowCaster) -->
+                <Border Style="{StaticResource ShadowCaster}" Margin="-13,-6,-6,-6"
+                        Background="{DynamicResource SurfaceBrush}" BorderBrush="{DynamicResource WindowOuterBorderBrush}"
+                        Effect="{DynamicResource SheetShadow}"/>
                 <DockPanel>
                     <Button DockPanel.Dock="Right" Style="{StaticResource ToolButton}" Width="28" Height="28"
                             FontSize="10" Content="&#xE711;" ToolTip="閉じる" Click="UndoToastClose_Click"/>
@@ -879,6 +903,7 @@
                     <TextBlock x:Name="UndoToastText" VerticalAlignment="Center" Margin="0,0,8,0"
                                TextTrimming="CharacterEllipsis" Foreground="{DynamicResource TextPrimaryBrush}"/>
                 </DockPanel>
+                </Grid>
             </Border>
             </Grid>
             </Border>
